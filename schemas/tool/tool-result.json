@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://thalamus.dev/schemas/tool/tool-result.json",
+  "title": "Tool Result Payload",
+  "type": "object",
+  "required": [
+    "request_id",
+    "status"
+  ],
+  "properties": {
+    "request_id": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "success",
+        "failure"
+      ]
+    },
+    "result": {
+      "type": "object"
+    },
+    "error": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://thalamus.dev/schemas/llm/llm-request.json",
+  "title": "LLM Request Payload",
+  "type": "object",
+  "required": [
+    "request_id",
+    "model",
+    "messages"
+  ],
+  "properties": {
+    "request_id": {
+      "type": "string"
+    },
+    "model": {
+      "type": "string"
+    },
+    "messages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "role",
+          "content"
+        ],
+        "properties": {
+          "role": {
+            "type": "string"
+          },
+          "content": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "temperature": {
+      "type": "number"
+    },
+    "max_tokens": {
+      "type": "integer"
+    }
+  },
+  "additionalProperties": false
+}

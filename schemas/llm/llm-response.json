@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://thalamus.dev/schemas/llm/llm-response.json",
+  "title": "LLM Response Payload",
+  "type": "object",
+  "required": [
+    "request_id",
+    "status"
+  ],
+  "properties": {
+    "request_id": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "success",
+        "failure"
+      ]
+    },
+    "message": {
+      "type": "object",
+      "properties": {
+        "role": {
+          "type": "string"
+        },
+        "content": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "role",
+        "content"
+      ],
+      "additionalProperties": false
+    },
+    "usage": {
+      "type": "object",
+      "properties": {
+        "prompt_tokens": {
+          "type": "integer"
+        },
+        "completion_tokens": {
+          "type": "integer"
+        },
+        "total_tokens": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false
+    },
+    "error": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false
+}

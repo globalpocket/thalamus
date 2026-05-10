@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://thalamus.dev/schemas/worker/worker-state.json",
+  "title": "Worker State Payload",
+  "type": "object",
+  "required": [
+    "worker_id",
+    "state"
+  ],
+  "properties": {
+    "worker_id": {
+      "type": "string"
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "CREATED",
+        "BOOTING",
+        "IDLE",
+        "RUNNING",
+        "WAITING",
+        "BLOCKED",
+        "COMPLETED",
+        "FAILED",
+        "TERMINATED"
+      ]
+    },
+    "reason": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false
+}

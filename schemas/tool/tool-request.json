@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://thalamus.dev/schemas/tool/tool-request.json",
+  "title": "Tool Request Payload",
+  "type": "object",
+  "required": [
+    "request_id",
+    "capability"
+  ],
+  "properties": {
+    "request_id": {
+      "type": "string"
+    },
+    "capability": {
+      "type": "string"
+    },
+    "arguments": {
+      "type": "object"
+    },
+    "timeout_ms": {
+      "type": "integer",
+      "minimum": 1
+    }
+  },
+  "additionalProperties": false
+}

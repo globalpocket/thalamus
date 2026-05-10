@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://thalamus.dev/schemas/task/task-result.json",
+  "title": "Task Result Event Payload",
+  "type": "object",
+  "required": [
+    "task_id",
+    "status"
+  ],
+  "properties": {
+    "task_id": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "success",
+        "failure",
+        "partial"
+      ]
+    },
+    "summary": {
+      "type": "string"
+    },
+    "error": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false
+}
