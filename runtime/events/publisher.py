@@ -1,36 +1,36 @@
 import uuid
-
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import datetime
 
 
 class EventPublisher:
 
     def __init__(self, bus):
+
         self.bus = bus
 
     async def publish(
         self,
-        event_type: str,
-        source: str,
-        payload: dict,
-        scope: Optional[dict] = None,
-        refs: Optional[dict] = None
+        event_type,
+        source,
+        payload,
+        subject=None,
+        scope=None,
+        correlation_id=None
     ):
 
-        event = {
-            "id": f"evt_{uuid.uuid4().hex}",
+        envelope = {
+            "id": str(uuid.uuid4()),
             "type": event_type,
-            "timestamp": datetime.now(
-                timezone.utc
-            ).isoformat(),
             "source": source,
+            "timestamp": datetime.utcnow().isoformat(),
+            "payload": payload,
             "scope": scope or {},
-            "refs": refs or {},
-            "payload": payload
+            "correlation_id": correlation_id
         }
 
+        publish_subject = subject or event_type
+
         await self.bus.publish(
-            event_type,
-            event
+            publish_subject,
+            envelope
         )

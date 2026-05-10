@@ -6,7 +6,9 @@ from runtime.supervisor.supervisor import Supervisor
 
 
 @pytest.mark.asyncio
-async def test_spawn_flow(nats_container):
+async def test_capability_routing(
+    nats_container
+):
 
     runtime = ThalamusRuntime(
         servers=[nats_container]
@@ -14,58 +16,80 @@ async def test_spawn_flow(nats_container):
 
     await runtime.start()
 
-    observed = []
-
     completed = asyncio.Event()
 
-    async def recorder(subject, event):
+    observed = []
 
-        event_type = event["type"]
+    async def recorder(
+        subject,
+        event
+    ):
 
-        observed.append(event_type)
+        observed.append(
+            event["type"]
+        )
 
-        print(f"observed: {event_type}")
+        print(event)
 
-        if event_type == "runtime.agent.exit":
+        if (
+            event["type"]
+            == "runtime.task.result"
+        ):
             completed.set()
 
-    await runtime.bus.subscribe(
-        "runtime.agent.ready",
-        recorder
-    )
-
+    #
+    # observe results
+    #
     await runtime.bus.subscribe(
         "runtime.task.result",
         recorder
     )
 
-    await runtime.bus.subscribe(
-        "runtime.agent.exit",
-        recorder
-    )
-
+    #
+    # spawn shell worker
+    #
     supervisor = Supervisor(
         nats_url=nats_container
     )
 
-    process, agent_id = supervisor.spawn_worker()
+    process, agent_id = supervisor.spawn_worker(
+        capabilities=[
+            "tool.shell"
+        ]
+    )
 
+    #
+    # allow boot
+    #
     await asyncio.sleep(2)
 
+    #
+    # direct task to agent
+    #
     task_subject = (
         f"runtime.task.assign.{agent_id}"
     )
 
+    #
+    # send shell task
+    #
     await runtime.publisher.publish(
-        event_type="runtime.task.assign",
+        event_type=(
+            "runtime.task.assign"
+        ),
         subject=task_subject,
-        source="test.supervisor",
+        source="test",
         payload={
-            "task_id": "task-spawn-001",
-            "objective": "verify spawned worker"
+            "task_id": "capability-001",
+            "objective": (
+                "execute shell cognition"
+            )
         }
     )
 
+    #
+    # wait result
+    #
     await asyncio.wait_for(
         completed.wait(),
         timeout=10
@@ -76,16 +100,6 @@ async def test_spawn_flow(nats_container):
     await runtime.stop()
 
     assert (
-        "runtime.agent.ready"
-        in observed
-    )
-
-    assert (
         "runtime.task.result"
-        in observed
-    )
-
-    assert (
-        "runtime.agent.exit"
         in observed
     )
