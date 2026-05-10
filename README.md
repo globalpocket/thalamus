@@ -377,12 +377,18 @@ The project explores:
 
 ## Status
 
-Early architecture and protocol definition phase.
+Prototype implementation phase.
 
-Current focus:
+Implemented today:
 
-* protocol definitions
-* event model
-* subject naming
-* lifecycle semantics
-* runtime contracts
+* event validation and publication for `runtime.task.assign`, `runtime.task.result`, `runtime.agent.ready`, `runtime.agent.exit`
+* NATS-based event bus adapter
+* disposable worker spawn flow through supervisor
+* direct task addressing via `runtime.task.assign.<agent_id>`
+* minimal sandbox shell worker capability (`tool.shell`) with timeout, stdout/stderr, and exit-code reporting
+
+Not implemented yet (still design-level in docs):
+
+* full shared cognition plane integration as runtime event path (`runtime.llm.request` / `runtime.llm.response`)
+* capability-plane mediation loop (`runtime.tool.request` / `runtime.tool.result`) inside runtime core
+* complete multi-plane architecture semantics beyond the current minimal executable subset

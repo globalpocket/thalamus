@@ -1,15 +1,11 @@
 ## Architecture Flow
 
-```
+```text
 publisher
  ↓
 runtime.task.assign
  ↓
 worker
- ↓
-runtime.llm.request
- ↓
-Cingulater
  ↓
 runtime.task.result
  ↓
@@ -24,7 +20,7 @@ Start NATS.
 
 ```bash
 docker run -p 4222:4222 nats
-````
+```
 
 ### Step 2
 
@@ -40,10 +36,4 @@ Run the publisher.
 
 ---
 
-If successful, you will observe the first:
-
-## "Cognitive Pulse"
-
-flowing through the runtime.
-
-````
+If successful, you will observe a task result event flowing through the runtime.

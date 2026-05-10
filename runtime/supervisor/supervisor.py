@@ -44,7 +44,7 @@ class Supervisor:
             [
                 sys.executable,
                 "-m",
-                "runtime.worker.simple_worker"
+                "runtime.worker.shell_worker"
             ],
             env=env
         )

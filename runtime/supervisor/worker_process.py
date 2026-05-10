@@ -6,7 +6,7 @@ class WorkerProcess:
 
     def __init__(
         self,
-        module="runtime.worker.simple_worker"
+        module="runtime.worker.shell_worker"
     ):
 
         self.module = module
