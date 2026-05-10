@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://thalamus.dev/schemas/runtime/event-envelope.json",
+  "title": "Thalamus Event Envelope",
+  "type": "object",
+  "required": [
+    "id",
+    "type",
+    "timestamp",
+    "source"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Globally unique event identifier"
+    },
+    "type": {
+      "type": "string",
+      "description": "Canonical runtime event type"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "source": {
+      "type": "string"
+    },
+    "scope": {
+      "type": "object",
+      "properties": {
+        "sandbox": {
+          "type": "string"
+        },
+        "worker": {
+          "type": "string"
+        },
+        "task": {
+          "type": "string"
+        },
+        "session": {
+          "type": "string"
+        },
+        "workflow": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "refs": {
+      "type": "object",
+      "properties": {
+        "workspace": {
+          "type": "string"
+        },
+        "context": {
+          "type": "string"
+        },
+        "artifact": {
+          "type": "string"
+        },
+        "memory": {
+          "type": "string"
+        },
+        "stream": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "payload": {
+      "type": "object"
+    }
+  },
+  "additionalProperties": false
+}
