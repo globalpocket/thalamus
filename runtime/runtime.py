@@ -4,10 +4,12 @@ from runtime.events.publisher import EventPublisher
 
 class ThalamusRuntime:
 
-    def __init__(self):
+    def __init__(self, servers=None):
 
         self.bus = NatsBus(
-            servers=["nats://localhost:4222"]
+            servers=servers or [
+                "nats://localhost:4222"
+            ]
         )
 
         self.publisher = EventPublisher(

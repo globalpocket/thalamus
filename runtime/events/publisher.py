@@ -1,5 +1,7 @@
 import uuid
+
 from datetime import datetime, timezone
+from typing import Optional
 
 
 class EventPublisher:
@@ -12,8 +14,8 @@ class EventPublisher:
         event_type: str,
         source: str,
         payload: dict,
-        scope: dict | None = None,
-        refs: dict | None = None
+        scope: Optional[dict] = None,
+        refs: Optional[dict] = None
     ):
 
         event = {

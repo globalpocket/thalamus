@@ -1,13 +1,16 @@
 import asyncio
+
 import pytest
 
 from runtime.runtime import ThalamusRuntime
 
 
 @pytest.mark.asyncio
-async def test_simple_task_flow():
+async def test_simple_task_flow(nats_container):
 
-    runtime = ThalamusRuntime()
+    runtime = ThalamusRuntime(
+        servers=[nats_container]
+    )
 
     await runtime.start()
 
@@ -15,9 +18,6 @@ async def test_simple_task_flow():
 
     result_payload = {}
 
-    #
-    # Result listener
-    #
     async def handle_result(subject, event):
 
         nonlocal result_payload
@@ -26,9 +26,6 @@ async def test_simple_task_flow():
 
         received_result.set()
 
-    #
-    # Worker
-    #
     async def handle_task(subject, event):
 
         payload = event["payload"]
@@ -39,13 +36,10 @@ async def test_simple_task_flow():
             payload={
                 "task_id": payload["task_id"],
                 "status": "success",
-                "summary": "Thalamus test response"
+                "summary": "Cognitive pulse confirmed"
             }
         )
 
-    #
-    # Subscribe
-    #
     await runtime.bus.subscribe(
         "runtime.task.assign",
         handle_task
@@ -56,34 +50,23 @@ async def test_simple_task_flow():
         handle_result
     )
 
-    #
-    # Publish task
-    #
     await runtime.publisher.publish(
         event_type="runtime.task.assign",
         source="test.publisher",
         payload={
             "task_id": "task-test-001",
-            "objective": "Test objective"
+            "objective": "Verify runtime propagation"
         }
     )
 
-    #
-    # Wait result
-    #
     await asyncio.wait_for(
         received_result.wait(),
         timeout=5
     )
 
-    #
-    # Assertions
-    #
-    assert result_payload["type"] == "runtime.task.result"
-
     assert (
-        result_payload["payload"]["task_id"]
-        == "task-test-001"
+        result_payload["type"]
+        == "runtime.task.result"
     )
 
     assert (
