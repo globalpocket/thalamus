@@ -41,7 +41,7 @@ Thalamus separates the runtime into distinct operational planes.
 ```text id="6m1k8v"
 Human
  ↓
-RooCode
+AI Agent
  ↓
 Cingulater
 (Shared Cognition Plane)
