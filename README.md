@@ -57,7 +57,7 @@ Thalamus separates these concerns into independent runtime layers.
 ```text
 Human
  ↓
-RooCode
+AI Agent
  ↓
 Cingulater
 (Shared Cognition Plane)
