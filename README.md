@@ -86,7 +86,7 @@ The system prioritizes:
 
 ---
 
-### Agents Are Disposable
+### Subagents Are Disposable
 
 Subagents are temporary runtime workers.
 
