@@ -1,0 +1,5 @@
+nats-py
+httpx
+jsonschema
+pytest
+pytest-asyncio

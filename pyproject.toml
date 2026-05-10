@@ -2,5 +2,13 @@
 name = "thalamus"
 version = "0.1.0"
 
+dependencies = [
+  "nats-py",
+  "httpx",
+  "jsonschema",
+  "pytest",
+  "pytest-asyncio"
+]
+
 [tool.pytest.ini_options]
 pythonpath = ["."]
