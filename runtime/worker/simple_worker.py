@@ -91,7 +91,10 @@ class SimpleWorker:
             source=self.agent_id,
             payload={
                 "task_id": payload["task_id"],
-                "result": "cognition complete",
+                "status": "success",
+                "result": {
+                    "summary": "cognition complete"
+                },
                 "worker_id": self.agent_id
             }
         )

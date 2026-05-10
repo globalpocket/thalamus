@@ -1,5 +1,8 @@
-import uuid
-from datetime import datetime
+import json
+
+from runtime.events.validator import (
+    validate_event
+)
 
 
 class EventPublisher:
@@ -10,27 +13,28 @@ class EventPublisher:
 
     async def publish(
         self,
-        event_type,
-        source,
-        payload,
-        subject=None,
-        scope=None,
-        correlation_id=None
+        event_type: str,
+        source: str,
+        payload: dict,
+        subject: str = None
     ):
 
-        envelope = {
-            "id": str(uuid.uuid4()),
-            "type": event_type,
-            "source": source,
-            "timestamp": datetime.utcnow().isoformat(),
-            "payload": payload,
-            "scope": scope or {},
-            "correlation_id": correlation_id
-        }
+        validated_event = validate_event(
+            event_type=event_type,
+            source=source,
+            payload=payload
+        )
 
-        publish_subject = subject or event_type
+        #
+        # default subject
+        #
+        if subject is None:
+
+            subject = event_type
 
         await self.bus.publish(
-            publish_subject,
-            envelope
+            subject,
+            json.dumps(
+                validated_event.model_dump()
+            ).encode()
         )
