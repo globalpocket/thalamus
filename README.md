@@ -6,7 +6,7 @@ Event-driven cognitive coordination protocol and runtime substrate for AI-native
 
 ## Overview
 
-Thalamus is a distributed cognitive runtime architecture for coordinating sandboxed AI subagents through event-driven communication.
+Thalamus is a distributed cognitive runtime architecture for coordinating sandboxed runtime workers through event-driven communication.
 
 It is **not**:
 
@@ -21,7 +21,7 @@ Instead, Thalamus focuses on:
 * runtime coordination
 * event topology
 * capability virtualization
-* disposable subagents
+* disposable runtime workers
 * AI-native execution environments
 
 Thalamus treats AI systems as a distributed nervous system rather than a collection of directly connected services.
@@ -39,7 +39,14 @@ Modern AI systems often tightly couple:
 * orchestration
 * provider APIs
 
-This creates rigid systems that are difficult to scale, distribute, isolate, replay, or evolve.
+This creates rigid systems that are difficult to:
+
+* scale
+* isolate
+* distribute
+* replay
+* observe
+* evolve
 
 Thalamus separates these concerns into independent runtime layers.
 
@@ -50,7 +57,7 @@ Thalamus separates these concerns into independent runtime layers.
 ```text
 Human
  ↓
-AI Agent
+RooCode
  ↓
 Cingulater
 (Shared Cognition Plane)
@@ -58,7 +65,7 @@ Cingulater
 Thalamus Runtime
 (Event-driven Cognitive Coordination Layer)
  ↓
-Sandboxed SubAgents
+Sandboxed Runtime Workers
  ↓
 mcp-routing-gateway
 (Capability Plane)
@@ -74,7 +81,7 @@ MCP Servers
 
 Thalamus is built around events, not synchronous orchestration.
 
-Agents communicate through cognitive signals propagated over an event fabric.
+Workers communicate through cognitive signals propagated over an event fabric.
 
 The system prioritizes:
 
@@ -86,16 +93,18 @@ The system prioritizes:
 
 ---
 
-### Subagents Are Disposable
+### Runtime Workers Are Disposable
 
-Subagents are temporary runtime workers.
+Runtime workers are temporary execution units.
 
 They are expected to:
 
 * spawn dynamically
-* execute tasks
+* process cognitive tasks
 * emit events
 * terminate cleanly
+
+Workers are intentionally lightweight and runtime-managed.
 
 No persistent ownership assumptions are made.
 
@@ -103,11 +112,11 @@ No persistent ownership assumptions are made.
 
 ### Runtime Owns Capabilities
 
-Agents do not own tools.
+Workers do not own tools.
 
 Capabilities belong to the runtime.
 
-Agents borrow capabilities through the runtime layer.
+Workers borrow capabilities through the runtime layer.
 
 ```python
 runtime.call_tool(...)
@@ -125,12 +134,12 @@ Internally this may route through:
 
 ### Shared Cognition Plane
 
-Subagents do not directly connect to LLM providers.
+Workers do not directly connect to LLM providers.
 
 All cognition flows through a shared cognition layer.
 
 ```text
-SubAgent
+Runtime Worker
  ↓
 Thalamus Runtime
  ↓
@@ -167,7 +176,7 @@ The runtime is centered around signal propagation rather than direct endpoint in
 
 ## Communication Model
 
-Thalamus separates:
+Thalamus separates runtime concerns into independent planes.
 
 | Plane            | Responsibility                  |
 | ---------------- | ------------------------------- |
@@ -175,7 +184,7 @@ Thalamus separates:
 | Capability Plane | Tool access and routing         |
 | Event Plane      | Cognitive coordination          |
 | Data Plane       | Contexts, artifacts, workspaces |
-| Execution Plane  | Sandboxed subagent execution    |
+| Execution Plane  | Sandboxed runtime execution     |
 
 ---
 
@@ -198,6 +207,23 @@ signal → propagation → resonance → reaction
 ```
 
 The runtime is designed more like a distributed nervous system than a traditional service mesh.
+
+---
+
+## Runtime Workers
+
+Runtime workers are not autonomous AI personalities.
+
+They are disposable cognitive execution units operating inside sandboxed environments.
+
+Workers:
+
+* receive events
+* perform inference
+* borrow capabilities
+* emit new events
+
+The intelligence of the system emerges from runtime coordination and event propagation rather than persistent agent identities.
 
 ---
 
@@ -253,7 +279,7 @@ Includes:
 
 ### sdk/
 
-Subagent SDKs.
+Runtime worker SDKs.
 
 Initial target:
 
@@ -304,14 +330,14 @@ Goal:
 ```text
 task publish
  ↓
-subagent receives task
+runtime worker receives task
  ↓
 shared LLM inference
  ↓
 result publish
 ```
 
-Before building advanced agent systems, Thalamus focuses on defining:
+Before building advanced cognitive systems, Thalamus focuses on defining:
 
 * runtime contracts
 * event topology
@@ -325,7 +351,7 @@ Before building advanced agent systems, Thalamus focuses on defining:
 * Protocol before implementation
 * Event-driven first
 * Distributed by default
-* Agents are disposable
+* Runtime workers are disposable
 * Runtime owns capabilities
 * Shared cognition plane
 * Capability virtualization
@@ -343,7 +369,7 @@ The project explores:
 * cognitive coordination
 * distributed AI execution
 * runtime-managed capabilities
-* recursive subagents
+* recursive worker spawning
 * event-native AI systems
 * AI operating substrate architectures
 
