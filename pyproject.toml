@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "thalamus"
 version = "0.1.0"
@@ -10,6 +14,14 @@ dependencies = [
   "pytest",
   "pytest-asyncio"
 ]
+
+[tool.setuptools]
+package-dir = {"" = "."}
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["runtime*", "schemas*", "protocol*"]
+exclude = ["tests*", "docs*", "examples*"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
