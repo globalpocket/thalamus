@@ -1,41 +1,35 @@
-import asyncio
+import json
 
+from runtime.bus.in_memory_bus import InMemoryBus
 from runtime.runtime import ThalamusRuntime
-from runtime.cognition.cingulater_client import (
-    CingulaterClient
+
+
+runtime = ThalamusRuntime(
+    bus=InMemoryBus()
 )
 
 
-runtime = ThalamusRuntime()
+def decode_event(event):
 
-llm = CingulaterClient(
-    base_url="http://localhost:8000",
-    api_key="dummy"
-)
+    if isinstance(event, bytes):
+        return json.loads(
+            event.decode()
+        )
+
+    return event
 
 
 async def handle_task(subject, event):
+
+    event = decode_event(
+        event
+    )
 
     payload = event["payload"]
 
     objective = payload["objective"]
 
     print(f"Received task: {objective}")
-
-    llm_response = await llm.chat(
-        model="gpt-4o-mini",
-        messages=[
-            {
-                "role": "user",
-                "content": objective
-            }
-        ]
-    )
-
-    content = (
-        llm_response["choices"][0]
-        ["message"]["content"]
-    )
 
     await runtime.publisher.publish(
         event_type="runtime.task.result",
@@ -44,7 +38,10 @@ async def handle_task(subject, event):
         payload={
             "task_id": payload["task_id"],
             "status": "success",
-            "summary": content
+            "summary": (
+                "reference runtime completed: "
+                f"{objective}"
+            )
         }
     )
 
@@ -62,9 +59,28 @@ async def main():
 
     print("Worker listening...")
 
-    while True:
-        await asyncio.sleep(1)
+    await runtime.publisher.publish(
+        event_type="runtime.task.assign",
+        source="example.publisher",
+        payload={
+            "task_id": "task-example-001",
+            "objective": "Verify in-memory task propagation"
+        }
+    )
+
+    print("Published events:")
+    for subject, event in runtime.bus.published:
+        print(
+            subject,
+            decode_event(
+                event
+            )["payload"]
+        )
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    import asyncio
+
+    asyncio.run(
+        main()
+    )

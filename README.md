@@ -386,9 +386,10 @@ Implemented today:
 * disposable worker spawn flow through supervisor
 * direct task addressing via `runtime.task.assign.<agent_id>`
 * minimal sandbox shell worker capability (`tool.shell`) with timeout, stdout/stderr, and exit-code reporting
+* minimal reference implemented runtime subjects for LLM and tool mediation (`runtime.llm.request` / `runtime.llm.response`, `runtime.tool.request` / `runtime.tool.result`)
 
 Not implemented yet (still design-level in docs):
 
-* full shared cognition plane integration as runtime event path (`runtime.llm.request` / `runtime.llm.response`)
-* capability-plane mediation loop (`runtime.tool.request` / `runtime.tool.result`) inside runtime core
+* full shared cognition plane integration beyond the minimal reference runtime path
+* full capability-plane mediation through external gateway integrations such as MCP
 * complete multi-plane architecture semantics beyond the current minimal executable subset

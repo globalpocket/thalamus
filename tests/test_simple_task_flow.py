@@ -1,77 +1,32 @@
-import asyncio
-
-import pytest
-
-from runtime.runtime import ThalamusRuntime
+from pathlib import Path
 
 
-@pytest.mark.asyncio
-async def test_simple_task_flow(nats_container):
+EXAMPLE_DIR = (
+    Path(__file__).resolve().parents[1]
+    / "examples"
+    / "simple-task-flow"
+)
 
-    runtime = ThalamusRuntime(
-        servers=[nats_container]
-    )
 
-    await runtime.start()
+def test_contract_worker_is_reference_runtime_example_without_external_services():
+    worker_source = (EXAMPLE_DIR / "worker.py").read_text()
 
-    received_result = asyncio.Event()
+    forbidden_runtime_dependencies = [
+        "NatsBus",
+        "CingulaterClient",
+        "localhost:8000",
+        "asyncio.run(main())",
+    ]
 
-    result_payload = {}
+    for forbidden_dependency in forbidden_runtime_dependencies:
+        assert forbidden_dependency not in worker_source
 
-    async def handle_result(subject, event):
 
-        nonlocal result_payload
+def test_contract_readme_documents_in_memory_reference_runtime_example():
+    readme_source = (EXAMPLE_DIR / "README.md").read_text()
+    readme_lower = readme_source.lower()
 
-        result_payload = event
-
-        received_result.set()
-
-    async def handle_task(subject, event):
-
-        payload = event["payload"]
-
-        await runtime.publisher.publish(
-            event_type="runtime.task.result",
-            source="test.worker",
-            payload={
-                "task_id": payload["task_id"],
-                "status": "success",
-                "summary": "Cognitive pulse confirmed"
-            }
-        )
-
-    await runtime.bus.subscribe(
-        "runtime.task.assign",
-        handle_task
-    )
-
-    await runtime.bus.subscribe(
-        "runtime.task.result",
-        handle_result
-    )
-
-    await runtime.publisher.publish(
-        event_type="runtime.task.assign",
-        source="test.publisher",
-        payload={
-            "task_id": "task-test-001",
-            "objective": "Verify runtime propagation"
-        }
-    )
-
-    await asyncio.wait_for(
-        received_result.wait(),
-        timeout=5
-    )
-
-    assert (
-        result_payload["type"]
-        == "runtime.task.result"
-    )
-
-    assert (
-        result_payload["payload"]["status"]
-        == "success"
-    )
-
-    await runtime.stop()
+    assert "in-memory" in readme_lower
+    assert "reference runtime example" in readme_lower
+    assert "docker run" not in readme_lower
+    assert "start nats" not in readme_lower

@@ -1,6 +1,7 @@
 import asyncio
 import os
 import signal
+import shlex
 import uuid
 
 from runtime.bus.nats_bus import NatsBus
@@ -73,8 +74,10 @@ class ShellWorker:
         command: str,
     ):
 
-        process = await asyncio.create_subprocess_shell(
-            command,
+        argv = shlex.split(command)
+
+        process = await asyncio.create_subprocess_exec(
+            *argv,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )

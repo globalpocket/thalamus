@@ -12,7 +12,8 @@ dependencies = [
   "httpx",
   "jsonschema",
   "pytest",
-  "pytest-asyncio"
+  "pytest-asyncio",
+  "pydantic>=2,<3",
 ]
 
 [tool.setuptools]
@@ -27,4 +28,10 @@ exclude = ["tests*", "docs*", "examples*"]
 pythonpath = ["."]
 filterwarnings = [
     "ignore::DeprecationWarning:testcontainers.*"
+]
+
+[dependency-groups]
+dev = [
+    "pytest-cov==7.0.0",
+    "testcontainers==4.14.2",
 ]

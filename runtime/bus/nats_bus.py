@@ -19,7 +19,7 @@ class NatsBus(EventBus):
     async def publish(self, subject: str, payload: dict) -> None:
         await self.nc.publish(
             subject,
-            payload
+            json.dumps(payload).encode()
         )
 
     async def subscribe(self, subject: str, handler):
