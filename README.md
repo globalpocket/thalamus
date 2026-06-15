@@ -387,6 +387,8 @@ Implemented today:
 * direct task addressing via `runtime.task.assign.<agent_id>`
 * minimal sandbox shell worker capability (`tool.shell`) with timeout, stdout/stderr, and exit-code reporting
 * minimal reference implemented runtime subjects for LLM and tool mediation (`runtime.llm.request` / `runtime.llm.response`, `runtime.tool.request` / `runtime.tool.result`)
+* Rust workspace quality gates are currently Green: full workspace tests pass, coverage is 93.50%, and the Rust security audit passes.
+* Rust SDK FFI subscription rejects a NULL callback with `-1`; callers must pass a valid callback function pointer to `thalamus_subscribe()`. The callback payload pointer is NUL-terminated, non-null, and valid only for the duration of the callback invocation.
 
 Not implemented yet (still design-level in docs):
 

@@ -1,0 +1,9 @@
+[workspace]
+members = [
+    "protocol",
+    "bus",
+    "runtime",
+    "cli",
+    "sdk",
+]
+resolver = "2"
