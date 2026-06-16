@@ -12,9 +12,9 @@ pub struct EventEnvelope {
     pub schema: String,
     // LCOV_EXCL_START
     #[serde(default)]
-    pub scope: Option<String>,
+    pub scope: Option<Value>,
     #[serde(default)]
-    pub refs: Vec<String>,
+    pub refs: Option<Value>,
     pub payload: Value,
     pub correlation_id: Option<String>,
     pub causation_id: Option<String>,
@@ -31,8 +31,8 @@ pub struct EventEnvelopeFields {
     pub timestamp: String,
     pub schema: String,
     // LCOV_EXCL_START
-    pub scope: Option<String>,
-    pub refs: Vec<String>,
+    pub scope: Option<Value>,
+    pub refs: Option<Value>,
     pub payload: Value,
     pub correlation_id: Option<String>,
     pub causation_id: Option<String>,

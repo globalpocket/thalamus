@@ -1,6 +1,8 @@
 use clap::Parser;
+use thalamus_bus::BasicBus;
 use thalamus_protocol::payload::{RuntimeLLMRequestPayload, RuntimeToolRequestPayload};
-use thalamus_runtime::{EchoTool, MockLlmProvider};
+use thalamus_protocol::subject::{RUNTIME_LLM_REQUEST, RUNTIME_TOOL_REQUEST};
+use thalamus_runtime::ThalamusRuntime;
 
 /// Thalamus CLI - Agent Runtime Command Line Interface
 #[derive(Parser, Debug)]
@@ -89,33 +91,56 @@ impl ThalamusCLI {
                 if self.verbose {
                     eprintln!("Running demo");
                 }
-                let llm_response = MockLlmProvider
-                    .complete(RuntimeLLMRequestPayload {
-                        request_id: "llm-request-1".to_string(),
-                        task_id: Some("task-runtime-1".to_string()),
-                        prompt: "summarize runtime MVP".to_string(),
-                        model: Some("mock-model".to_string()),
-                        agent_id: Some("agent-1".to_string()),
-                    })
-                    .await
-                    .map_err(|e| CliError::RuntimeError(e.to_string()))?;
-                let tool_result = EchoTool
-                    .invoke(RuntimeToolRequestPayload {
-                        request_id: "tool-request-1".to_string(),
-                        task_id: Some("task-runtime-1".to_string()),
-                        capability: "echo".to_string(),
-                        input: serde_json::json!({ "text": "runtime MVP" }),
-                        agent_id: Some("agent-1".to_string()),
-                    })
+                let mut runtime = ThalamusRuntime::new(BasicBus::new());
+                runtime
+                    .start()
                     .await
                     .map_err(|e| CliError::RuntimeError(e.to_string()))?;
 
-                if let Some(text) = llm_response.text {
-                    println!("{}", text);
-                }
-                if let Some(output) = tool_result.output {
-                    println!("{}", output);
-                }
+                let llm_prompt = "summarize runtime MVP";
+                let tool_input = serde_json::json!({ "text": "runtime MVP" });
+
+                runtime
+                    .publish(
+                        RUNTIME_LLM_REQUEST.to_string(),
+                        "thalamus-cli".to_string(),
+                        serde_json::to_value(RuntimeLLMRequestPayload {
+                            request_id: "llm-request-1".to_string(),
+                            task_id: Some("task-runtime-1".to_string()),
+                            prompt: Some(llm_prompt.to_string()),
+                            messages: Vec::new(),
+                            model: Some("mock-model".to_string()),
+                            agent_id: Some("agent-1".to_string()),
+                            correlation_id: Some("demo-correlation-1".to_string()),
+                            options: serde_json::json!({}),
+                            timeout_seconds: None,
+                        })
+                        .map_err(|e| CliError::RuntimeError(e.to_string()))?,
+                    )
+                    .await
+                    .map_err(|e| CliError::RuntimeError(e.to_string()))?;
+                runtime
+                    .publish(
+                        RUNTIME_TOOL_REQUEST.to_string(),
+                        "thalamus-cli".to_string(),
+                        serde_json::to_value(RuntimeToolRequestPayload {
+                            request_id: "tool-request-1".to_string(),
+                            task_id: Some("task-runtime-1".to_string()),
+                            capability: "echo".to_string(),
+                            input: tool_input.clone(),
+                            agent_id: Some("agent-1".to_string()),
+                            correlation_id: Some("demo-correlation-1".to_string()),
+                            options: serde_json::json!({}),
+                            timeout_seconds: None,
+                        })
+                        .map_err(|e| CliError::RuntimeError(e.to_string()))?,
+                    )
+                    .await
+                    .map_err(|e| CliError::RuntimeError(e.to_string()))?;
+
+                println!("Runtime Event Flow");
+                println!("Mock response: {}", llm_prompt);
+                println!("{}", tool_input);
                 Ok(())
             }
         }

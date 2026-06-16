@@ -4,11 +4,13 @@ use std::sync::Arc;
 use thalamus_bus::MessageBus;
 use thalamus_protocol::{
     payload::{
-        RuntimeLLMRequestPayload, RuntimeLLMResponsePayload, RuntimeToolRequestPayload,
-        RuntimeToolResultPayload,
+        RuntimeAgentErrorPayload, RuntimeAgentExitPayload, RuntimeAgentReadyPayload,
+        RuntimeLLMRequestPayload, RuntimeLLMResponsePayload, RuntimeTaskAssignPayload,
+        RuntimeTaskResultPayload, RuntimeToolRequestPayload, RuntimeToolResultPayload,
     },
     subject::{
-        RUNTIME_AGENT_SPAWN, RUNTIME_LLM_REQUEST, RUNTIME_LLM_RESPONSE, RUNTIME_TASK_ASSIGN,
+        RUNTIME_AGENT_ERROR, RUNTIME_AGENT_EXIT, RUNTIME_AGENT_READY, RUNTIME_AGENT_SPAWN,
+        RUNTIME_LLM_REQUEST, RUNTIME_LLM_RESPONSE, RUNTIME_TASK_ASSIGN, RUNTIME_TASK_RESULT,
         RUNTIME_TOOL_REQUEST, RUNTIME_TOOL_RESULT,
     },
     EventEnvelope,
@@ -66,6 +68,7 @@ pub type EventHandler = Arc<
 pub struct TaskState {
     id: String,
     assigned_agent: Arc<RwLock<Option<String>>>,
+    status: Arc<RwLock<String>>,
 }
 
 impl TaskState {
@@ -73,6 +76,7 @@ impl TaskState {
         Self {
             id,
             assigned_agent: Arc::new(RwLock::new(None)),
+            status: Arc::new(RwLock::new("created".to_string())),
         }
     }
 
@@ -82,10 +86,19 @@ impl TaskState {
 
     pub async fn assign_to(&self, agent_id: String) {
         *self.assigned_agent.write().await = Some(agent_id);
+        self.set_status("assigned".to_string()).await;
     }
 
     pub async fn assigned_agent(&self) -> Option<String> {
         self.assigned_agent.read().await.clone()
+    }
+
+    pub async fn set_status(&self, status: String) {
+        *self.status.write().await = status;
+    }
+
+    pub async fn status(&self) -> String {
+        self.status.read().await.clone()
     }
 }
 
@@ -94,6 +107,7 @@ impl TaskState {
 pub struct WorkerInfo {
     pub id: String,
     pub capabilities: Vec<String>,
+    pub state: String,
 }
 
 /// WorkerRegistry: ワーカーIDから能力を検索する最小レジストリ
@@ -107,8 +121,20 @@ impl WorkerRegistry {
         let worker = WorkerInfo {
             id: id.clone(),
             capabilities,
+            state: "ready".to_string(),
         };
         self.workers.insert(id, worker);
+    }
+
+    pub fn set_state(&mut self, id: String, state: String) {
+        self.workers
+            .entry(id.clone())
+            .and_modify(|worker| worker.state = state.clone())
+            .or_insert_with(|| WorkerInfo {
+                id,
+                capabilities: Vec::new(),
+                state,
+            });
     }
 
     pub fn lookup(&self, id: &str) -> Option<&WorkerInfo> {
@@ -125,15 +151,26 @@ impl MockLlmProvider {
         &self,
         request: RuntimeLLMRequestPayload,
     ) -> Result<RuntimeLLMResponsePayload, RuntimeError> {
-        let response_input = request.prompt;
+        let response_input = request.prompt.unwrap_or_else(|| {
+            request
+                .messages
+                .last()
+                .and_then(|message| message.get("content"))
+                .and_then(|content| content.as_str())
+                .unwrap_or_default()
+                .to_string()
+        });
 
         Ok(RuntimeLLMResponsePayload {
             request_id: request.request_id,
-            task_id: request.task_id.unwrap_or_default(),
+            task_id: request.task_id,
             status: "completed".to_string(),
             text: Some(format!("Mock response: {}", response_input)),
-            model: request.model.unwrap_or_else(|| "mock".to_string()),
-            error: None,
+            model: request.model.or_else(|| Some("mock".to_string())),
+            message: serde_json::Value::Null,
+            usage: serde_json::Value::Null,
+            error: serde_json::Value::Null,
+            correlation_id: request.correlation_id,
         })
     }
 }
@@ -149,10 +186,12 @@ impl EchoTool {
     ) -> Result<RuntimeToolResultPayload, RuntimeError> {
         Ok(RuntimeToolResultPayload {
             request_id: request.request_id,
-            task_id: request.task_id.unwrap_or_default(),
+            task_id: request.task_id,
+            capability: request.capability,
             status: "completed".to_string(),
             output: Some(request.input),
-            error: None,
+            error: serde_json::Value::Null,
+            correlation_id: request.correlation_id,
         })
     }
 }
@@ -163,6 +202,8 @@ pub struct ThalamusRuntime<B: MessageBus> {
     state: Arc<RwLock<RuntimeState>>,
     handlers: Arc<RwLock<HashMap<String, EventHandler>>>,
     task_handles: Arc<RwLock<Vec<TaskHandle>>>,
+    worker_registry: Arc<RwLock<WorkerRegistry>>,
+    task_states: Arc<RwLock<HashMap<String, TaskState>>>,
 }
 
 impl<B: MessageBus> fmt::Debug for ThalamusRuntime<B> {
@@ -181,6 +222,8 @@ impl<B: MessageBus> ThalamusRuntime<B> {
             state: Arc::new(RwLock::new(RuntimeState::Initialized)),
             handlers: Arc::new(RwLock::new(HashMap::new())),
             task_handles: Arc::new(RwLock::new(Vec::new())),
+            worker_registry: Arc::new(RwLock::new(WorkerRegistry::default())),
+            task_states: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -234,6 +277,14 @@ impl<B: MessageBus> ThalamusRuntime<B> {
     pub async fn active_task_count(&self) -> usize {
         self.task_handles.read().await.len()
     }
+
+    pub async fn worker_registry(&self) -> WorkerRegistry {
+        self.worker_registry.read().await.clone()
+    }
+
+    pub async fn task_state(&self, id: &str) -> Option<TaskState> {
+        self.task_states.read().await.get(id).cloned()
+    }
 }
 
 impl<B: MessageBus> ThalamusRuntime<B> {
@@ -241,7 +292,11 @@ impl<B: MessageBus> ThalamusRuntime<B> {
         let mut handlers = self.handlers.write().await;
         for subject in [
             RUNTIME_AGENT_SPAWN,
+            RUNTIME_AGENT_READY,
+            RUNTIME_AGENT_EXIT,
+            RUNTIME_AGENT_ERROR,
             RUNTIME_TASK_ASSIGN,
+            RUNTIME_TASK_RESULT,
             RUNTIME_LLM_REQUEST,
             RUNTIME_TOOL_REQUEST,
         ] {
@@ -249,6 +304,85 @@ impl<B: MessageBus> ThalamusRuntime<B> {
                 .entry(subject.to_string())
                 .or_insert_with(|| Arc::new(|_subject, _event| Box::pin(async {})));
         }
+    }
+
+    async fn update_agent_ready(&self, event: &EventEnvelope) {
+        let Ok(payload) = serde_json::from_value::<RuntimeAgentReadyPayload>(event.payload.clone())
+        else {
+            return;
+        };
+        self.worker_registry
+            .write()
+            .await
+            .register(payload.agent_id, payload.capabilities);
+    }
+
+    async fn update_agent_exit(&self, event: &EventEnvelope) {
+        let Ok(payload) = serde_json::from_value::<RuntimeAgentExitPayload>(event.payload.clone())
+        else {
+            return;
+        };
+        self.worker_registry
+            .write()
+            .await
+            .set_state(payload.agent_id, "exited".to_string());
+    }
+
+    async fn update_agent_error(&self, event: &EventEnvelope) {
+        let Ok(payload) = serde_json::from_value::<RuntimeAgentErrorPayload>(event.payload.clone())
+        else {
+            return;
+        };
+        if let Some(agent_id) = payload.agent_id {
+            self.worker_registry
+                .write()
+                .await
+                .set_state(agent_id, "error".to_string());
+        }
+    }
+
+    async fn update_task_assign(&self, event: &EventEnvelope) {
+        let Ok(payload) = serde_json::from_value::<RuntimeTaskAssignPayload>(event.payload.clone())
+        else {
+            return;
+        };
+        let task = {
+            let mut task_states = self.task_states.write().await;
+            task_states
+                .entry(payload.task_id.clone())
+                .or_insert_with(|| TaskState::new(payload.task_id.clone()))
+                .clone()
+        };
+        if let Some(agent_id) = payload.agent_id {
+            task.assign_to(agent_id).await;
+        } else {
+            task.set_status("assigned".to_string()).await;
+        }
+    }
+
+    async fn update_task_result(&self, event: &EventEnvelope) {
+        let Ok(payload) = serde_json::from_value::<RuntimeTaskResultPayload>(event.payload.clone())
+        else {
+            return;
+        };
+        let has_error = !payload.error.is_null()
+            && !payload
+                .error
+                .as_object()
+                .is_some_and(|object| object.is_empty());
+        let status = if has_error {
+            "failed".to_string()
+        } else {
+            payload.status
+        };
+        let task = {
+            let mut task_states = self.task_states.write().await;
+            task_states
+                .entry(payload.task_id.clone())
+                .or_insert_with(|| TaskState::new(payload.task_id.clone()))
+                .clone()
+        };
+        task.set_status(status).await;
     }
 
     fn envelope(subject: String, source: String, payload: serde_json::Value) -> EventEnvelope {
@@ -261,7 +395,7 @@ impl<B: MessageBus> ThalamusRuntime<B> {
             scope: None,
             schema: format!("thalamus.{}", subject),
             payload,
-            refs: Vec::new(),
+            refs: None,
             correlation_id: None,
             causation_id: None,
             metadata: serde_json::json!({}),
@@ -274,6 +408,11 @@ impl<B: MessageBus> ThalamusRuntime<B> {
         event: &EventEnvelope,
     ) -> Result<(), RuntimeError> {
         match subject {
+            RUNTIME_AGENT_READY => self.update_agent_ready(event).await,
+            RUNTIME_AGENT_EXIT => self.update_agent_exit(event).await,
+            RUNTIME_AGENT_ERROR => self.update_agent_error(event).await,
+            RUNTIME_TASK_ASSIGN => self.update_task_assign(event).await,
+            RUNTIME_TASK_RESULT => self.update_task_result(event).await,
             RUNTIME_LLM_REQUEST => {
                 let Ok(request) =
                     serde_json::from_value::<RuntimeLLMRequestPayload>(event.payload.clone())
@@ -281,13 +420,15 @@ impl<B: MessageBus> ThalamusRuntime<B> {
                     return Ok(());
                 };
                 let response = MockLlmProvider.complete(request).await?;
-                let payload = serde_json::to_value(response)
+                let payload = serde_json::to_value(&response)
                     .map_err(|e| RuntimeError::BusError(format!("serialize failed: {}", e)))?;
-                let response_event = Self::envelope(
+                let mut response_event = Self::envelope(
                     RUNTIME_LLM_RESPONSE.to_string(),
                     "thalamus-runtime".to_string(),
                     payload,
                 );
+                response_event.correlation_id = response.correlation_id.clone();
+                response_event.causation_id = Some(event.id.clone());
                 self.bus
                     .publish(response_event)
                     .await
@@ -300,13 +441,15 @@ impl<B: MessageBus> ThalamusRuntime<B> {
                     return Ok(());
                 };
                 let result = EchoTool.invoke(request).await?;
-                let payload = serde_json::to_value(result)
+                let payload = serde_json::to_value(&result)
                     .map_err(|e| RuntimeError::BusError(format!("serialize failed: {}", e)))?;
-                let result_event = Self::envelope(
+                let mut result_event = Self::envelope(
                     RUNTIME_TOOL_RESULT.to_string(),
                     "thalamus-runtime".to_string(),
                     payload,
                 );
+                result_event.correlation_id = result.correlation_id.clone();
+                result_event.causation_id = Some(event.id.clone());
                 self.bus
                     .publish(result_event)
                     .await
@@ -396,13 +539,6 @@ impl<B: MessageBus> ThalamusRuntime<B> {
         source: String,
         payload: serde_json::Value,
     ) -> Result<EventEnvelope, RuntimeError> {
-        if self.bus.handler_count(&subject).await == 0 {
-            return Err(RuntimeError::BusError(format!(
-                "publish failed: subject not found: {}",
-                subject
-            )));
-        }
-
         let envelope = Self::envelope(subject.clone(), source, payload);
 
         self.bus

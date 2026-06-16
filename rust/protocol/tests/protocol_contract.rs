@@ -20,8 +20,15 @@ fn contract_event_envelope_preserves_public_fields_and_serializes_type() {
         source: "protocol-contract".to_string(),
         timestamp: "2026-01-01T00:00:00Z".to_string(),
         schema: "subject.v1".to_string(),
-        scope: Some("runtime".to_string()),
-        refs: vec!["ref-1".to_string(), "ref-2".to_string()],
+        scope: Some(json!({
+            "runtime": "protocol",
+            "tenant": "test",
+            "segments": ["mvp", "contract"]
+        })),
+        refs: Some(json!([
+            { "kind": "task", "id": "task-1" },
+            { "kind": "agent", "id": "agent-1", "capabilities": ["shell", "llm"] }
+        ])),
         payload: json!({ "name": "example", "nested": { "count": 2 } }),
         correlation_id: Some("correlation-1".to_string()),
         causation_id: Some("causation-1".to_string()),
@@ -34,10 +41,20 @@ fn contract_event_envelope_preserves_public_fields_and_serializes_type() {
     assert_eq!(envelope.source, "protocol-contract");
     assert_eq!(envelope.timestamp, "2026-01-01T00:00:00Z");
     assert_eq!(envelope.schema, "subject.v1");
-    assert_eq!(envelope.scope, Some("runtime".to_string()));
+    assert_eq!(
+        envelope.scope,
+        Some(json!({
+            "runtime": "protocol",
+            "tenant": "test",
+            "segments": ["mvp", "contract"]
+        }))
+    );
     assert_eq!(
         envelope.refs,
-        vec!["ref-1".to_string(), "ref-2".to_string()]
+        Some(json!([
+            { "kind": "task", "id": "task-1" },
+            { "kind": "agent", "id": "agent-1", "capabilities": ["shell", "llm"] }
+        ]))
     );
     assert_eq!(
         envelope.payload,
@@ -57,8 +74,21 @@ fn contract_event_envelope_preserves_public_fields_and_serializes_type() {
 
     assert_eq!(serialized_value["type"], json!("runtime.agent.ready"));
     assert!(serialized_value.get("r#type").is_none());
-    assert_eq!(serialized_value["scope"], json!("runtime"));
-    assert_eq!(serialized_value["refs"], json!(["ref-1", "ref-2"]));
+    assert_eq!(
+        serialized_value["scope"],
+        json!({
+            "runtime": "protocol",
+            "tenant": "test",
+            "segments": ["mvp", "contract"]
+        })
+    );
+    assert_eq!(
+        serialized_value["refs"],
+        json!([
+            { "kind": "task", "id": "task-1" },
+            { "kind": "agent", "id": "agent-1", "capabilities": ["shell", "llm"] }
+        ])
+    );
     assert_eq!(
         serialized_value["payload"],
         json!({ "name": "example", "nested": { "count": 2 } })
@@ -69,10 +99,20 @@ fn contract_event_envelope_preserves_public_fields_and_serializes_type() {
         serialized_value["metadata"],
         json!({ "tenant": "test", "trace": { "sampled": true } })
     );
-    assert_eq!(deserialized.scope, Some("runtime".to_string()));
+    assert_eq!(
+        deserialized.scope,
+        Some(json!({
+            "runtime": "protocol",
+            "tenant": "test",
+            "segments": ["mvp", "contract"]
+        }))
+    );
     assert_eq!(
         deserialized.refs,
-        vec!["ref-1".to_string(), "ref-2".to_string()]
+        Some(json!([
+            { "kind": "task", "id": "task-1" },
+            { "kind": "agent", "id": "agent-1", "capabilities": ["shell", "llm"] }
+        ]))
     );
     assert_eq!(
         deserialized.payload,
@@ -111,7 +151,7 @@ fn contract_event_envelope_deserializes_canonical_json_with_default_extensions()
     assert_eq!(deserialized.r#type, "runtime.task.assign");
     assert_eq!(deserialized.subject, "runtime.task.assign.agent-1");
     assert_eq!(deserialized.scope, None);
-    assert_eq!(deserialized.refs, Vec::<String>::new());
+    assert_eq!(deserialized.refs, None);
 }
 
 #[test]
@@ -153,10 +193,13 @@ fn contract_runtime_payload_structs_round_trip_public_fields() {
 
     let task_assign = RuntimeTaskAssignPayload {
         task_id: "task-1".to_string(),
-        agent_id: "agent-1".to_string(),
+        agent_id: Some("agent-1".to_string()),
+        parent_task_id: Some("parent-task-1".to_string()),
         input: json!({ "prompt": "run" }),
         capabilities: vec!["shell".to_string(), "llm".to_string()],
         metadata: json!({ "priority": "high" }),
+        correlation_id: Some("correlation-1".to_string()),
+        options: json!({ "retry": 2 }),
     };
     let task_assign_json =
         serde_json::to_value(&task_assign).expect("task assign payload serializes");
@@ -173,6 +216,8 @@ fn contract_runtime_payload_structs_round_trip_public_fields() {
         status: "completed".to_string(),
         summary: Some("done".to_string()),
         result: Some(json!({ "ok": true })),
+        error: json!({}),
+        correlation_id: Some("correlation-1".to_string()),
     };
     let task_result_json =
         serde_json::to_value(&task_result).expect("task result payload serializes");
@@ -205,6 +250,9 @@ fn contract_runtime_payload_structs_round_trip_public_fields() {
         capability: "shell".to_string(),
         input: json!({ "cmd": "echo ok" }),
         agent_id: Some("agent-1".to_string()),
+        correlation_id: Some("correlation-1".to_string()),
+        options: json!({ "cwd": "/workspace" }),
+        timeout_seconds: Some(30),
     };
     let tool_request_json =
         serde_json::to_value(&tool_request).expect("tool request payload serializes");
@@ -214,10 +262,12 @@ fn contract_runtime_payload_structs_round_trip_public_fields() {
 
     let tool_result = RuntimeToolResultPayload {
         request_id: "request-1".to_string(),
-        task_id: "task-1".to_string(),
+        task_id: Some("task-1".to_string()),
+        capability: "shell".to_string(),
         status: "completed".to_string(),
         output: Some(json!({ "stdout": "ok" })),
-        error: None,
+        error: json!({}),
+        correlation_id: Some("correlation-1".to_string()),
     };
     let tool_result_json =
         serde_json::to_value(&tool_result).expect("tool result payload serializes");
@@ -228,9 +278,13 @@ fn contract_runtime_payload_structs_round_trip_public_fields() {
     let llm_request = RuntimeLLMRequestPayload {
         request_id: "request-2".to_string(),
         task_id: Some("task-2".to_string()),
-        prompt: "summarize".to_string(),
+        prompt: Some("summarize".to_string()),
+        messages: vec![json!({ "role": "user", "content": "summarize" })],
         model: Some("model-a".to_string()),
         agent_id: Some("agent-2".to_string()),
+        correlation_id: Some("correlation-2".to_string()),
+        options: json!({ "temperature": 0.2, "max_tokens": 128 }),
+        timeout_seconds: Some(60),
     };
     let llm_request_json =
         serde_json::to_value(&llm_request).expect("llm request payload serializes");
@@ -240,11 +294,14 @@ fn contract_runtime_payload_structs_round_trip_public_fields() {
 
     let llm_response = RuntimeLLMResponsePayload {
         request_id: "request-2".to_string(),
-        task_id: "task-2".to_string(),
+        task_id: Some("task-2".to_string()),
         status: "completed".to_string(),
         text: Some("summary".to_string()),
-        model: "model-a".to_string(),
-        error: None,
+        model: Some("model-a".to_string()),
+        message: json!({ "role": "assistant", "content": "summary" }),
+        usage: json!({ "input_tokens": 10, "output_tokens": 2 }),
+        error: json!({}),
+        correlation_id: Some("correlation-2".to_string()),
     };
     let llm_response_json =
         serde_json::to_value(&llm_response).expect("llm response payload serializes");
@@ -254,7 +311,7 @@ fn contract_runtime_payload_structs_round_trip_public_fields() {
 
     let agent_error = RuntimeAgentErrorPayload {
         agent_id: Some("agent-3".to_string()),
-        error: "failed".to_string(),
+        error: json!({ "message": "failed" }),
         task_id: Some("task-3".to_string()),
     };
     let agent_error_json =

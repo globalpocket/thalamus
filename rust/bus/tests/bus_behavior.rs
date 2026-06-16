@@ -15,7 +15,7 @@ fn envelope_for(subject: &str) -> EventEnvelope {
         timestamp: Uuid::new_v4().to_string(),
         schema: "1.0".to_string(),
         scope: None,
-        refs: Vec::new(),
+        refs: None,
         payload: serde_json::json!({}),
         correlation_id: None,
         causation_id: None,

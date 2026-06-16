@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 clap = { version = "4.4", features = ["derive"] }
+thalamus-bus = { path = "../bus" }
 thalamus-protocol = { path = "../protocol" }
 thalamus-runtime = { path = "../runtime" }
 tokio = { version = "1", features = ["full"] }

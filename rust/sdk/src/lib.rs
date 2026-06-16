@@ -44,7 +44,7 @@ impl ThalamusSDK {
             scope: None,
             schema: "thalamus/v1".to_string(),
             payload,
-            refs: Vec::new(),
+            refs: None,
             correlation_id: None,
             causation_id: None,
             metadata: serde_json::json!({}),

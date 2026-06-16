@@ -97,11 +97,15 @@ fn behavior_binary_run_demo_prints_deterministic_mvp_outcome() {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
+        stdout.contains("Runtime Event Flow"),
+        "expected run-demo stdout to expose the Runtime-mediated event flow marker, got: {stdout}"
+    );
+    assert!(
         stdout.contains("Mock response: summarize runtime MVP"),
-        "expected run-demo stdout to contain deterministic mock LLM response, got: {stdout}"
+        "expected run-demo stdout to contain deterministic Runtime-mediated mock LLM response, got: {stdout}"
     );
     assert!(
         stdout.contains(r#"{"text":"runtime MVP"}"#),
-        "expected run-demo stdout to contain deterministic echo tool outcome, got: {stdout}"
+        "expected run-demo stdout to contain deterministic Runtime-mediated echo tool outcome, got: {stdout}"
     );
 }

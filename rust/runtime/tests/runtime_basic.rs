@@ -4,9 +4,14 @@ use std::sync::{
 };
 use thalamus_bus::BasicBus;
 use thalamus_protocol::{
-    payload::{RuntimeLLMRequestPayload, RuntimeToolRequestPayload},
+    payload::{
+        RuntimeAgentErrorPayload, RuntimeAgentExitPayload, RuntimeAgentReadyPayload,
+        RuntimeLLMRequestPayload, RuntimeTaskAssignPayload, RuntimeTaskResultPayload,
+        RuntimeToolRequestPayload,
+    },
     subject::{
-        RUNTIME_AGENT_SPAWN, RUNTIME_LLM_REQUEST, RUNTIME_LLM_RESPONSE, RUNTIME_TASK_ASSIGN,
+        RUNTIME_AGENT_ERROR, RUNTIME_AGENT_EXIT, RUNTIME_AGENT_READY, RUNTIME_AGENT_SPAWN,
+        RUNTIME_LLM_REQUEST, RUNTIME_LLM_RESPONSE, RUNTIME_TASK_ASSIGN, RUNTIME_TASK_RESULT,
         RUNTIME_TOOL_REQUEST, RUNTIME_TOOL_RESULT,
     },
     EventEnvelope,
@@ -131,7 +136,7 @@ async fn behavior_handle_event_without_registered_handler_returns_schedule_error
         timestamp: "2025-01-01T00:00:00Z".to_string(),
         schema: "thalamus.unit.runtime.missing".to_string(),
         scope: None,
-        refs: Vec::new(),
+        refs: None,
         payload: serde_json::json!({ "contract": "missing-handler" }),
         correlation_id: None,
         causation_id: None,
@@ -196,21 +201,24 @@ async fn behavior_lifecycle_errors_preserve_state_transition_contract() {
 }
 
 #[tokio::test]
-async fn behavior_publish_without_registered_subject_maps_bus_error() {
+async fn runtime_publish_without_handler_is_ok() {
     let runtime = ThalamusRuntime::new(BasicBus::default());
     let subject = "unit.runtime.unregistered-publish".to_string();
 
-    let error = runtime
+    let envelope = runtime
         .publish(
             subject.clone(),
             "runtime-basic-test".to_string(),
-            serde_json::json!({ "behavior": "publish-error-mapping" }),
+            serde_json::json!({ "behavior": "publish-without-handler" }),
         )
         .await
-        .expect_err("unregistered subject should map bus error");
+        .expect("publish without handler should be accepted and recorded");
 
-    assert!(
-        matches!(error, RuntimeError::BusError(message) if message == format!("publish failed: subject not found: {subject}"))
+    assert_eq!(envelope.subject, subject);
+    assert_eq!(envelope.source, "runtime-basic-test");
+    assert_eq!(
+        runtime_basic_bus(&runtime).published_events().await,
+        vec![envelope]
     );
 }
 
@@ -236,6 +244,150 @@ async fn contract_task_state_and_worker_registry_support_runtime_lookup() {
     assert_eq!(
         worker.capabilities,
         vec!["llm".to_string(), "tool.echo".to_string()]
+    );
+}
+
+#[tokio::test]
+async fn runtime_agent_ready_exit_error_updates_registry() {
+    let mut runtime = ThalamusRuntime::new(BasicBus::default());
+
+    runtime
+        .start()
+        .await
+        .expect("runtime should start with agent lifecycle handlers");
+
+    runtime
+        .publish(
+            RUNTIME_AGENT_READY.to_string(),
+            "runtime-basic-test".to_string(),
+            serde_json::to_value(RuntimeAgentReadyPayload {
+                agent_id: "agent-1".to_string(),
+                capabilities: vec!["llm".to_string(), "tool.echo".to_string()],
+            })
+            .expect("agent ready payload should serialize"),
+        )
+        .await
+        .expect("agent ready publish should update registry");
+
+    let registry = runtime.worker_registry().await;
+    let ready_worker = registry
+        .lookup("agent-1")
+        .expect("ready agent should be registered");
+    assert_eq!(ready_worker.state, "ready");
+    assert_eq!(
+        ready_worker.capabilities,
+        vec!["llm".to_string(), "tool.echo".to_string()]
+    );
+
+    runtime
+        .publish(
+            RUNTIME_AGENT_EXIT.to_string(),
+            "runtime-basic-test".to_string(),
+            serde_json::to_value(RuntimeAgentExitPayload {
+                agent_id: "agent-1".to_string(),
+                reason: Some("shutdown".to_string()),
+            })
+            .expect("agent exit payload should serialize"),
+        )
+        .await
+        .expect("agent exit publish should update registry");
+    assert_eq!(
+        runtime
+            .worker_registry()
+            .await
+            .lookup("agent-1")
+            .expect("exited agent should remain observable")
+            .state,
+        "exited"
+    );
+
+    runtime
+        .publish(
+            RUNTIME_AGENT_ERROR.to_string(),
+            "runtime-basic-test".to_string(),
+            serde_json::to_value(RuntimeAgentErrorPayload {
+                agent_id: Some("agent-1".to_string()),
+                error: serde_json::json!({ "message": "failed" }),
+                task_id: None,
+            })
+            .expect("agent error payload should serialize"),
+        )
+        .await
+        .expect("agent error publish should update registry");
+    assert_eq!(
+        runtime
+            .worker_registry()
+            .await
+            .lookup("agent-1")
+            .expect("errored agent should remain observable")
+            .state,
+        "error"
+    );
+}
+
+#[tokio::test]
+async fn runtime_task_assign_result_updates_task_state() {
+    let mut runtime = ThalamusRuntime::new(BasicBus::default());
+
+    runtime
+        .start()
+        .await
+        .expect("runtime should start with task state handlers");
+
+    runtime
+        .publish(
+            RUNTIME_TASK_ASSIGN.to_string(),
+            "runtime-basic-test".to_string(),
+            serde_json::to_value(RuntimeTaskAssignPayload {
+                task_id: "task-runtime-1".to_string(),
+                agent_id: Some("agent-1".to_string()),
+                parent_task_id: None,
+                input: serde_json::json!({ "prompt": "summarize runtime MVP" }),
+                capabilities: vec!["llm".to_string()],
+                metadata: serde_json::json!({}),
+                correlation_id: Some("correlation-1".to_string()),
+                options: serde_json::json!({}),
+            })
+            .expect("task assign payload should serialize"),
+        )
+        .await
+        .expect("task assign publish should create assigned task state");
+
+    let assigned_task = runtime
+        .task_state("task-runtime-1")
+        .await
+        .expect("assigned task state should be observable");
+    assert_eq!(assigned_task.status().await, "assigned");
+    assert_eq!(
+        assigned_task.assigned_agent().await.as_deref(),
+        Some("agent-1")
+    );
+
+    runtime
+        .publish(
+            RUNTIME_TASK_RESULT.to_string(),
+            "runtime-basic-test".to_string(),
+            serde_json::to_value(RuntimeTaskResultPayload {
+                task_id: "task-runtime-1".to_string(),
+                status: "completed".to_string(),
+                summary: Some("done".to_string()),
+                result: Some(serde_json::json!({ "ok": true })),
+                error: serde_json::json!({}),
+                correlation_id: Some("correlation-1".to_string()),
+            })
+            .expect("task result payload should serialize"),
+        )
+        .await
+        .expect("task result publish should update task state");
+
+    assert_eq!(
+        runtime
+            .task_state("task-runtime-1")
+            .await
+            .expect("completed task state should remain observable")
+            .status()
+            .await,
+        "completed"
     );
 }
 
@@ -275,9 +427,13 @@ async fn behavior_mock_llm_provider_and_echo_tool_mediate_runtime_requests() {
     let llm_request = RuntimeLLMRequestPayload {
         request_id: "llm-request-1".to_string(),
         task_id: Some("task-runtime-1".to_string()),
-        prompt: "summarize runtime MVP".to_string(),
+        prompt: Some("summarize runtime MVP".to_string()),
+        messages: Vec::new(),
         model: Some("mock-model".to_string()),
         agent_id: Some("agent-1".to_string()),
+        correlation_id: Some("correlation-llm-1".to_string()),
+        options: serde_json::json!({}),
+        timeout_seconds: None,
     };
     let tool_request = RuntimeToolRequestPayload {
         request_id: "tool-request-1".to_string(),
@@ -285,6 +441,9 @@ async fn behavior_mock_llm_provider_and_echo_tool_mediate_runtime_requests() {
         capability: "echo".to_string(),
         input: serde_json::json!({ "text": "runtime MVP" }),
         agent_id: Some("agent-1".to_string()),
+        correlation_id: Some("correlation-tool-1".to_string()),
+        options: serde_json::json!({}),
+        timeout_seconds: None,
     };
 
     let llm_response = llm_provider
@@ -391,6 +550,102 @@ async fn behavior_runtime_default_handlers_publish_llm_response_and_tool_result(
             .iter()
             .any(|subject| subject == RUNTIME_TOOL_RESULT),
         "expected runtime default tool handler to publish {RUNTIME_TOOL_RESULT}, got {published_subjects:?}"
+    );
+}
+
+#[tokio::test]
+async fn behavior_runtime_llm_result_payload_preserves_request_correlation_id() {
+    let mut runtime = ThalamusRuntime::new(BasicBus::default());
+
+    runtime
+        .start()
+        .await
+        .expect("runtime should start with default MVP handlers");
+
+    let llm_request_envelope = runtime
+        .publish(
+            RUNTIME_LLM_REQUEST.to_string(),
+            "runtime-basic-test".to_string(),
+            serde_json::json!({
+                "request_id": "llm-correlation-request-1",
+                "task_id": "task-runtime-1",
+                "prompt": "summarize runtime correlation MVP",
+                "model": "mock-model",
+                "agent_id": "agent-1",
+                "correlation_id": "correlation-llm-result-1"
+            }),
+        )
+        .await
+        .expect("runtime should accept LLM correlation request through the bus");
+
+    let published_events = runtime_basic_bus(&runtime).published_events().await;
+    let llm_result = published_events
+        .iter()
+        .find(|event| {
+            event.subject == RUNTIME_LLM_RESPONSE
+                && event.payload["request_id"] == serde_json::json!("llm-correlation-request-1")
+        })
+        .expect("LLM result payload correlation_id should equal request correlation_id");
+
+    assert_eq!(
+        llm_result.payload["correlation_id"],
+        serde_json::json!("correlation-llm-result-1")
+    );
+    assert_eq!(
+        llm_result.correlation_id.as_deref(),
+        Some("correlation-llm-result-1")
+    );
+    assert_eq!(
+        llm_result.causation_id.as_deref(),
+        Some(llm_request_envelope.id.as_str())
+    );
+}
+
+#[tokio::test]
+async fn behavior_runtime_tool_result_payload_preserves_request_correlation_id() {
+    let mut runtime = ThalamusRuntime::new(BasicBus::default());
+
+    runtime
+        .start()
+        .await
+        .expect("runtime should start with default MVP handlers");
+
+    let tool_request_envelope = runtime
+        .publish(
+            RUNTIME_TOOL_REQUEST.to_string(),
+            "runtime-basic-test".to_string(),
+            serde_json::json!({
+                "request_id": "tool-correlation-request-1",
+                "task_id": "task-runtime-1",
+                "capability": "echo",
+                "input": { "text": "runtime correlation MVP" },
+                "agent_id": "agent-1",
+                "correlation_id": "correlation-tool-result-1"
+            }),
+        )
+        .await
+        .expect("runtime should accept tool correlation request through the bus");
+
+    let published_events = runtime_basic_bus(&runtime).published_events().await;
+    let tool_result = published_events
+        .iter()
+        .find(|event| {
+            event.subject == RUNTIME_TOOL_RESULT
+                && event.payload["request_id"] == serde_json::json!("tool-correlation-request-1")
+        })
+        .expect("Tool result payload correlation_id should equal request correlation_id");
+
+    assert_eq!(
+        tool_result.payload["correlation_id"],
+        serde_json::json!("correlation-tool-result-1")
+    );
+    assert_eq!(
+        tool_result.correlation_id.as_deref(),
+        Some("correlation-tool-result-1")
+    );
+    assert_eq!(
+        tool_result.causation_id.as_deref(),
+        Some(tool_request_envelope.id.as_str())
     );
 }
 
