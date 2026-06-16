@@ -11,6 +11,26 @@ pub struct EventEnvelope {
     pub timestamp: String,
     pub schema: String,
     // LCOV_EXCL_START
+    #[serde(default)]
+    pub scope: Option<String>,
+    #[serde(default)]
+    pub refs: Vec<String>,
+    pub payload: Value,
+    pub correlation_id: Option<String>,
+    pub causation_id: Option<String>,
+    pub metadata: Value,
+    // LCOV_EXCL_STOP
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct EventEnvelopeFields {
+    pub id: String,
+    pub r#type: String,
+    pub subject: String,
+    pub source: String,
+    pub timestamp: String,
+    pub schema: String,
+    // LCOV_EXCL_START
     pub scope: Option<String>,
     pub refs: Vec<String>,
     pub payload: Value,
@@ -21,22 +41,24 @@ pub struct EventEnvelope {
 }
 
 impl EventEnvelope {
-    pub fn new(
-        id: String,
-        r#type: String,
-        subject: String,
-        source: String,
-        timestamp: String,
-        schema: String,
-        // LCOV_EXCL_START
-        scope: Option<String>,
-        refs: Vec<String>,
-        payload: Value,
-        correlation_id: Option<String>,
-        causation_id: Option<String>,
-        metadata: Value,
-        // LCOV_EXCL_STOP
-    ) -> Self {
+    pub fn new(fields: EventEnvelopeFields) -> Self {
+        let EventEnvelopeFields {
+            id,
+            r#type,
+            subject,
+            source,
+            timestamp,
+            schema,
+            // LCOV_EXCL_START
+            scope,
+            refs,
+            payload,
+            correlation_id,
+            causation_id,
+            metadata,
+            // LCOV_EXCL_STOP
+        } = fields;
+
         Self {
             id,
             r#type,

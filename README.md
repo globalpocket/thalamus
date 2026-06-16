@@ -387,7 +387,12 @@ Implemented today:
 * direct task addressing via `runtime.task.assign.<agent_id>`
 * minimal sandbox shell worker capability (`tool.shell`) with timeout, stdout/stderr, and exit-code reporting
 * minimal reference implemented runtime subjects for LLM and tool mediation (`runtime.llm.request` / `runtime.llm.response`, `runtime.tool.request` / `runtime.tool.result`)
-* Rust workspace quality gates are currently Green: full workspace tests pass, coverage is 93.50%, and the Rust security audit passes.
+* Rust Runtime MVP is implemented in [`rust/`](rust/): protocol envelope and payload contracts, in-memory bus behavior, runtime lifecycle, bus-mediated deterministic LLM/tool result handlers, CLI parsing, and deterministic local demo command coverage.
+* Rust protocol exposes [`EventEnvelope`](rust/protocol/src/message.rs:5) with canonical fields plus `scope` and `refs`, and constructs envelopes through [`EventEnvelopeFields`](rust/protocol/src/message.rs:26).
+* Rust bus exposes [`BasicBus`](rust/bus/src/lib.rs:84) with publish delivery, closed-bus errors, no-subscriber success, and an observation snapshot via [`published_events()`](rust/bus/src/lib.rs:101).
+* Rust runtime exposes [`TaskState`](rust/runtime/src/lib.rs:65), [`WorkerRegistry`](rust/runtime/src/lib.rs:100), [`MockLlmProvider`](rust/runtime/src/lib.rs:120), [`EchoTool`](rust/runtime/src/lib.rs:140), default MVP subject registration, LLM request input from `prompt` or the last `messages` content, bus-mediated publication of [`runtime.llm.response`](rust/runtime/src/lib.rs:285) and [`runtime.tool.result`](rust/runtime/src/lib.rs:304), and unknown-subject runtime error mapping.
+* Rust CLI includes [`RunDemo`](rust/cli/src/lib.rs:35), which emits deterministic local demo output from [`MockLlmProvider`](rust/runtime/src/lib.rs:120) and [`EchoTool`](rust/runtime/src/lib.rs:140). Its manifest declares [`thalamus-protocol`](rust/cli/Cargo.toml:8) and [`serde_json`](rust/cli/Cargo.toml:11).
+* Rust workspace latest verification artifacts after messages support are available for [`cargo fmt`](artifacts/build/cargo-fmt-after-messages.log:1), [`cargo clippy`](artifacts/build/cargo-clippy-after-messages.log:1), and [`cargo test`](artifacts/test-results/cargo-test-after-messages.log:1).
 * Rust SDK FFI subscription rejects a NULL callback with `-1`; callers must pass a valid callback function pointer to `thalamus_subscribe()`. The callback payload pointer is NUL-terminated, non-null, and valid only for the duration of the callback invocation.
 
 Not implemented yet (still design-level in docs):

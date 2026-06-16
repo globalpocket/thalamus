@@ -38,10 +38,13 @@ impl ThalamusSDK {
         let envelope = EventEnvelope {
             id: uuid::Uuid::new_v4().to_string(),
             subject: subject.to_string(),
+            r#type: subject.to_string(),
             source: source.to_string(),
             timestamp: chrono::Utc::now().to_rfc3339(),
+            scope: None,
             schema: "thalamus/v1".to_string(),
             payload,
+            refs: Vec::new(),
             correlation_id: None,
             causation_id: None,
             metadata: serde_json::json!({}),
@@ -159,9 +162,9 @@ pub unsafe extern "C" fn thalamus_subscribe(
             })
             .to_string();
 
-        if let Ok(c_payload) = CString::new(payload) {
-            handler(c_payload.as_ptr());
-        }
+            if let Ok(c_payload) = CString::new(payload) {
+                handler(c_payload.as_ptr());
+            }
 
             0
         }
@@ -203,7 +206,11 @@ mod tests {
     fn test_publish_connected() {
         let mut sdk = ThalamusSDK::new();
         sdk.connect();
-        let result = sdk.publish("test.subject", "test.source", serde_json::json!({"key": "value"}));
+        let result = sdk.publish(
+            "test.subject",
+            "test.source",
+            serde_json::json!({"key": "value"}),
+        );
         assert!(result.is_ok());
         let envelope = result.unwrap();
         assert_eq!(envelope.subject, "test.subject");

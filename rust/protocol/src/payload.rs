@@ -1,5 +1,10 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RuntimeAgentSpawnPayload {
+    pub state: String,
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RuntimeTaskAssignPayload {
@@ -52,13 +57,57 @@ pub struct RuntimeToolResultPayload {
     pub error: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct RuntimeLLMRequestPayload {
     pub request_id: String,
     pub task_id: Option<String>,
     pub prompt: String,
     pub model: Option<String>,
     pub agent_id: Option<String>,
+}
+
+impl<'de> Deserialize<'de> for RuntimeLLMRequestPayload {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct RuntimeLLMRequestPayloadInput {
+            request_id: String,
+            task_id: Option<String>,
+            #[serde(default)]
+            prompt: Option<String>,
+            #[serde(default)]
+            messages: Vec<RuntimeLLMMessageInput>,
+            model: Option<String>,
+            agent_id: Option<String>,
+        }
+
+        #[derive(Deserialize)]
+        struct RuntimeLLMMessageInput {
+            #[serde(default)]
+            content: String,
+        }
+
+        let input = RuntimeLLMRequestPayloadInput::deserialize(deserializer)?;
+        let last_message_content = input
+            .messages
+            .last()
+            .map(|message| message.content.clone())
+            .unwrap_or_default();
+        let prompt = input
+            .prompt
+            .filter(|prompt| !prompt.is_empty())
+            .unwrap_or(last_message_content);
+
+        Ok(Self {
+            request_id: input.request_id,
+            task_id: input.task_id,
+            prompt,
+            model: input.model,
+            agent_id: input.agent_id,
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

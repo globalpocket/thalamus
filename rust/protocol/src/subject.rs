@@ -1,3 +1,4 @@
+pub const RUNTIME_AGENT_SPAWN: &str = "runtime.agent.spawn";
 pub const RUNTIME_AGENT_READY: &str = "runtime.agent.ready";
 pub const RUNTIME_AGENT_EXIT: &str = "runtime.agent.exit";
 pub const RUNTIME_AGENT_ERROR: &str = "runtime.agent.error";

@@ -1,4 +1,7 @@
-use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc,
+};
 use thalamus_bus::{BasicBus, BusError, Handler, MessageBus, Subscription, SubscriptionId};
 use thalamus_protocol::EventEnvelope;
 use uuid::Uuid;
@@ -6,10 +9,13 @@ use uuid::Uuid;
 fn envelope_for(subject: &str) -> EventEnvelope {
     EventEnvelope {
         id: Uuid::new_v4().to_string(),
+        r#type: "behavior.event".to_string(),
         subject: subject.to_string(),
         source: "behavior-test".to_string(),
         timestamp: Uuid::new_v4().to_string(),
         schema: "1.0".to_string(),
+        scope: None,
+        refs: Vec::new(),
         payload: serde_json::json!({}),
         correlation_id: None,
         causation_id: None,
@@ -26,7 +32,10 @@ async fn behavior_public_formatters_expose_stable_display_and_debug_contract() {
         handler,
     };
 
-    assert_eq!(SubscriptionId("sub-1".to_string()).to_string(), "SubscriptionId(sub-1)");
+    assert_eq!(
+        SubscriptionId("sub-1".to_string()).to_string(),
+        "SubscriptionId(sub-1)"
+    );
     assert_eq!(
         format!("{subscription:?}"),
         "Subscription { id: \"sub-1\", subject: \"test.subject\", .. }"
@@ -46,7 +55,9 @@ async fn behavior_default_bus_publish_delivers_envelope_to_matching_handler() {
         })
     });
 
-    bus.subscribe("test.subject".to_string(), handler).await.unwrap();
+    bus.subscribe("test.subject".to_string(), handler)
+        .await
+        .unwrap();
     bus.publish(envelope_for("test.subject")).await.unwrap();
 
     assert_eq!(delivered.load(Ordering::SeqCst), 1);
@@ -61,8 +72,37 @@ async fn behavior_publish_maps_panicking_handler_to_protocol_error() {
         })
     });
 
-    bus.subscribe("test.subject".to_string(), handler).await.unwrap();
+    bus.subscribe("test.subject".to_string(), handler)
+        .await
+        .unwrap();
     let result = bus.publish(envelope_for("test.subject")).await;
 
     assert!(matches!(result, Err(BusError::ProtocolError)));
+}
+
+#[tokio::test]
+async fn behavior_publish_without_subscribers_succeeds() {
+    let bus = BasicBus::default();
+
+    let result = bus.publish(envelope_for("test.unhandled")).await;
+
+    assert!(
+        result.is_ok(),
+        "publish without subscribers should succeed, got {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn behavior_publish_records_event_for_observation() {
+    let bus = BasicBus::default();
+    let envelope = envelope_for("test.recorded");
+    let expected_id = envelope.id.clone();
+    let expected_subject = envelope.subject.clone();
+
+    bus.publish(envelope).await.unwrap();
+    let published = bus.published_events().await;
+
+    assert_eq!(published.len(), 1);
+    assert_eq!(published[0].id, expected_id);
+    assert_eq!(published[0].subject, expected_subject);
 }

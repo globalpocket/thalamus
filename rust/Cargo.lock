@@ -606,6 +606,8 @@ name = "thalamus-cli"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "serde_json",
+ "thalamus-protocol",
  "thalamus-runtime",
  "thiserror 1.0.69",
  "tokio",

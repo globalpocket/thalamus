@@ -22,7 +22,11 @@ pub enum BusError {
 }
 
 /// Handler: イベントハンドラーの型定義
-pub type Handler = Arc<dyn Fn(EventEnvelope) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> + Send + Sync>;
+pub type Handler = Arc<
+    dyn Fn(EventEnvelope) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>
+        + Send
+        + Sync,
+>;
 
 /// Subscription: サブスクリプション情報
 pub struct Subscription {
@@ -80,6 +84,7 @@ pub trait MessageBus: Send + Sync {
 pub struct BasicBus {
     subscribers: Arc<RwLock<HashMap<String, Vec<Subscription>>>>,
     closed: Arc<RwLock<bool>>,
+    published_events: Arc<RwLock<Vec<EventEnvelope>>>,
 }
 
 impl BasicBus {
@@ -88,7 +93,13 @@ impl BasicBus {
         Self {
             subscribers: Arc::new(RwLock::new(HashMap::new())),
             closed: Arc::new(RwLock::new(false)),
+            published_events: Arc::new(RwLock::new(Vec::new())),
         }
+    }
+
+    /// 公開済みイベントを観測用に取得する
+    pub async fn published_events(&self) -> Vec<EventEnvelope> {
+        self.published_events.read().await.clone()
     }
 
     /// サブジェクトにマッチするハンドラーを取得する
@@ -140,9 +151,7 @@ impl MessageBus for BasicBus {
 
         let handlers = self.get_handlers(&envelope.subject).await;
 
-        if handlers.is_empty() {
-            return Err(BusError::NotFound(envelope.subject));
-        }
+        self.published_events.write().await.push(envelope.clone());
 
         // ハンドラーを並列実行
         let mut handles = Vec::new();
@@ -156,9 +165,7 @@ impl MessageBus for BasicBus {
 
         // 全ハンドラーの完了を待つ
         for handle in handles {
-            handle.await.map_err(|_| {
-                BusError::ProtocolError
-            })?;
+            handle.await.map_err(|_| BusError::ProtocolError)?;
         }
 
         Ok(())
@@ -210,7 +217,10 @@ mod tests {
         let mut bus = BasicBus::new();
         let handler: Handler = Arc::new(|_| Box::pin(async {}));
 
-        let id = bus.subscribe("test.subject".to_string(), handler).await.unwrap();
+        let id = bus
+            .subscribe("test.subject".to_string(), handler)
+            .await
+            .unwrap();
 
         assert_eq!(bus.handler_count("test.subject").await, 1);
         assert_eq!(id.0.len(), 36); // UUID v4 format
@@ -221,7 +231,10 @@ mod tests {
         let mut bus = BasicBus::new();
         let handler: Handler = Arc::new(|_| Box::pin(async {}));
 
-        let id = bus.subscribe("test.subject".to_string(), handler).await.unwrap();
+        let id = bus
+            .subscribe("test.subject".to_string(), handler)
+            .await
+            .unwrap();
         assert_eq!(bus.handler_count("test.subject").await, 1);
 
         bus.unsubscribe(id).await.unwrap();
@@ -248,16 +261,20 @@ mod tests {
         let bus = BasicBus::new();
         let envelope = EventEnvelope {
             id: "test-id".to_string(),
+            r#type: "test.event".to_string(),
             subject: "test.subject".to_string(),
             source: "test".to_string(),
             timestamp: Uuid::new_v4().to_string(),
             schema: "1.0".to_string(),
+            scope: None,
+            refs: Vec::new(),
             payload: serde_json::json!({}),
             correlation_id: None,
             causation_id: None,
             metadata: serde_json::json!({}),
         };
 
-        assert!(bus.publish(envelope).await.is_err());
+        assert!(bus.publish(envelope).await.is_ok());
+        assert_eq!(bus.published_events().await.len(), 1);
     }
 }

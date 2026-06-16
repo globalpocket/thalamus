@@ -1,4 +1,6 @@
 use clap::Parser;
+use thalamus_protocol::payload::{RuntimeLLMRequestPayload, RuntimeToolRequestPayload};
+use thalamus_runtime::{EchoTool, MockLlmProvider};
 
 /// Thalamus CLI - Agent Runtime Command Line Interface
 #[derive(Parser, Debug)]
@@ -29,6 +31,8 @@ pub enum CLICommand {
     Status,
     /// List available agents
     ListAgents,
+    /// Run the local deterministic demo
+    RunDemo,
 }
 
 /// CLI Error types
@@ -81,6 +85,45 @@ impl ThalamusCLI {
                 // Agent listing will be implemented in Unit 6
                 Ok(())
             }
+            CLICommand::RunDemo => {
+                if self.verbose {
+                    eprintln!("Running demo");
+                }
+                let llm_response = MockLlmProvider
+                    .complete(RuntimeLLMRequestPayload {
+                        request_id: "llm-request-1".to_string(),
+                        task_id: Some("task-runtime-1".to_string()),
+                        prompt: "summarize runtime MVP".to_string(),
+                        model: Some("mock-model".to_string()),
+                        agent_id: Some("agent-1".to_string()),
+                    })
+                    .await
+                    .map_err(|e| CliError::RuntimeError(e.to_string()))?;
+                let tool_result = EchoTool
+                    .invoke(RuntimeToolRequestPayload {
+                        request_id: "tool-request-1".to_string(),
+                        task_id: Some("task-runtime-1".to_string()),
+                        capability: "echo".to_string(),
+                        input: serde_json::json!({ "text": "runtime MVP" }),
+                        agent_id: Some("agent-1".to_string()),
+                    })
+                    .await
+                    .map_err(|e| CliError::RuntimeError(e.to_string()))?;
+
+                if let Some(text) = llm_response.text {
+                    println!("{}", text);
+                }
+                if let Some(output) = tool_result.output {
+                    println!("{}", output);
+                }
+                Ok(())
+            }
         }
+    }
+}
+
+impl Default for ThalamusCLI {
+    fn default() -> Self {
+        Self::new()
     }
 }

@@ -3,9 +3,7 @@ use std::os::raw::c_char;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use serde_json::json;
-use thalamus_sdk::{
-    thalamus_publish, thalamus_subscribe, ThalamusSDK,
-};
+use thalamus_sdk::{thalamus_publish, thalamus_subscribe, ThalamusSDK};
 
 static CALLBACK_CALLS: AtomicUsize = AtomicUsize::new(0);
 static CALLBACK_PAYLOAD_MATCHED: AtomicBool = AtomicBool::new(false);
@@ -26,8 +24,8 @@ fn contract_connected_subscribe_succeeds() {
 fn contract_ffi_publish_rejects_null_and_accepts_valid_json() {
     let subject = CString::new("contract.subject").expect("subject has no interior NUL");
     let source = CString::new("contract.source").expect("source has no interior NUL");
-    let payload = CString::new(json!({ "ok": true }).to_string())
-        .expect("payload JSON has no interior NUL");
+    let payload =
+        CString::new(json!({ "ok": true }).to_string()).expect("payload JSON has no interior NUL");
 
     unsafe {
         assert_eq!(
@@ -61,7 +59,10 @@ fn regression_ffi_subscribe_rejects_null_callback() {
 #[test]
 fn contract_ffi_subscribe_invokes_callback_with_nul_terminated_payload() {
     extern "C" fn callback(payload: *const c_char) {
-        assert!(!payload.is_null(), "callback payload pointer must be non-null");
+        assert!(
+            !payload.is_null(),
+            "callback payload pointer must be non-null"
+        );
 
         let payload = unsafe { std::ffi::CStr::from_ptr(payload) }
             .to_str()
