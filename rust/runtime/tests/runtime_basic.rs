@@ -298,7 +298,7 @@ async fn runtime_agent_ready_exit_error_updates_registry() {
             .lookup("agent-1")
             .expect("exited agent should remain observable")
             .state,
-        "exited"
+        thalamus_runtime::WorkerState::Exited
     );
 
     runtime
@@ -306,9 +306,7 @@ async fn runtime_agent_ready_exit_error_updates_registry() {
             RUNTIME_AGENT_ERROR.to_string(),
             "runtime-basic-test".to_string(),
             serde_json::to_value(RuntimeAgentErrorPayload {
-                agent_id: Some("agent-1".to_string()),
                 error: serde_json::json!({ "message": "failed" }),
-                task_id: None,
             })
             .expect("agent error payload should serialize"),
         )
@@ -321,7 +319,7 @@ async fn runtime_agent_ready_exit_error_updates_registry() {
             .lookup("agent-1")
             .expect("errored agent should remain observable")
             .state,
-        "error"
+        thalamus_runtime::WorkerState::Error
     );
 }
 
@@ -346,7 +344,6 @@ async fn runtime_task_assign_result_updates_task_state() {
                 capabilities: vec!["llm".to_string()],
                 metadata: serde_json::json!({}),
                 correlation_id: Some("correlation-1".to_string()),
-                options: serde_json::json!({}),
             })
             .expect("task assign payload should serialize"),
         )
@@ -370,7 +367,6 @@ async fn runtime_task_assign_result_updates_task_state() {
             serde_json::to_value(RuntimeTaskResultPayload {
                 task_id: "task-runtime-1".to_string(),
                 status: "completed".to_string(),
-                summary: Some("done".to_string()),
                 result: Some(serde_json::json!({ "ok": true })),
                 error: serde_json::json!({}),
                 correlation_id: Some("correlation-1".to_string()),
@@ -425,25 +421,19 @@ async fn behavior_mock_llm_provider_and_echo_tool_mediate_runtime_requests() {
     let llm_provider = MockLlmProvider;
     let echo_tool = EchoTool;
     let llm_request = RuntimeLLMRequestPayload {
-        request_id: "llm-request-1".to_string(),
-        task_id: Some("task-runtime-1".to_string()),
+        task_id: "task-runtime-1".to_string(),
+        model: Some("mock-model".to_string()),
         prompt: Some("summarize runtime MVP".to_string()),
         messages: Vec::new(),
-        model: Some("mock-model".to_string()),
-        agent_id: Some("agent-1".to_string()),
-        correlation_id: Some("correlation-llm-1".to_string()),
         options: serde_json::json!({}),
-        timeout_seconds: None,
+        correlation_id: Some("correlation-llm-1".to_string()),
     };
     let tool_request = RuntimeToolRequestPayload {
-        request_id: "tool-request-1".to_string(),
-        task_id: Some("task-runtime-1".to_string()),
+        task_id: "task-runtime-1".to_string(),
         capability: "echo".to_string(),
         input: serde_json::json!({ "text": "runtime MVP" }),
-        agent_id: Some("agent-1".to_string()),
-        correlation_id: Some("correlation-tool-1".to_string()),
-        options: serde_json::json!({}),
         timeout_seconds: None,
+        correlation_id: Some("correlation-tool-1".to_string()),
     };
 
     let llm_response = llm_provider
@@ -455,14 +445,12 @@ async fn behavior_mock_llm_provider_and_echo_tool_mediate_runtime_requests() {
         .await
         .expect("echo tool should answer");
 
-    assert_eq!(llm_response.status, "completed");
     assert_eq!(
-        llm_response.text.as_deref(),
-        Some("Mock response: summarize runtime MVP")
+        llm_response.message["content"],
+        serde_json::json!("Mock response: summarize runtime MVP")
     );
-    assert_eq!(tool_result.status, "completed");
     assert_eq!(
-        tool_result.output,
+        tool_result.result,
         Some(serde_json::json!({ "text": "runtime MVP" }))
     );
 }
@@ -509,11 +497,9 @@ async fn behavior_runtime_default_handlers_publish_llm_response_and_tool_result(
             RUNTIME_LLM_REQUEST.to_string(),
             "runtime-basic-test".to_string(),
             serde_json::json!({
-                "request_id": "llm-request-1",
                 "task_id": "task-runtime-1",
                 "prompt": "summarize runtime MVP",
-                "model": "mock-model",
-                "agent_id": "agent-1"
+                "model": "mock-model"
             }),
         )
         .await
@@ -524,11 +510,9 @@ async fn behavior_runtime_default_handlers_publish_llm_response_and_tool_result(
             RUNTIME_TOOL_REQUEST.to_string(),
             "runtime-basic-test".to_string(),
             serde_json::json!({
-                "request_id": "tool-request-1",
                 "task_id": "task-runtime-1",
                 "capability": "echo",
-                "input": { "text": "runtime MVP" },
-                "agent_id": "agent-1"
+                "input": { "text": "runtime MVP" }
             }),
         )
         .await
@@ -567,11 +551,9 @@ async fn behavior_runtime_llm_result_payload_preserves_request_correlation_id() 
             RUNTIME_LLM_REQUEST.to_string(),
             "runtime-basic-test".to_string(),
             serde_json::json!({
-                "request_id": "llm-correlation-request-1",
-                "task_id": "task-runtime-1",
+                "task_id": "task-runtime-llm-correlation-1",
                 "prompt": "summarize runtime correlation MVP",
                 "model": "mock-model",
-                "agent_id": "agent-1",
                 "correlation_id": "correlation-llm-result-1"
             }),
         )
@@ -583,7 +565,7 @@ async fn behavior_runtime_llm_result_payload_preserves_request_correlation_id() 
         .iter()
         .find(|event| {
             event.subject == RUNTIME_LLM_RESPONSE
-                && event.payload["request_id"] == serde_json::json!("llm-correlation-request-1")
+                && event.payload["task_id"] == serde_json::json!("task-runtime-llm-correlation-1")
         })
         .expect("LLM result payload correlation_id should equal request correlation_id");
 
@@ -593,7 +575,7 @@ async fn behavior_runtime_llm_result_payload_preserves_request_correlation_id() 
     );
     assert_eq!(
         llm_result.correlation_id.as_deref(),
-        Some("correlation-llm-result-1")
+        Some(llm_request_envelope.id.as_str())
     );
     assert_eq!(
         llm_result.causation_id.as_deref(),
@@ -615,11 +597,9 @@ async fn behavior_runtime_tool_result_payload_preserves_request_correlation_id()
             RUNTIME_TOOL_REQUEST.to_string(),
             "runtime-basic-test".to_string(),
             serde_json::json!({
-                "request_id": "tool-correlation-request-1",
-                "task_id": "task-runtime-1",
+                "task_id": "task-runtime-tool-correlation-1",
                 "capability": "echo",
                 "input": { "text": "runtime correlation MVP" },
-                "agent_id": "agent-1",
                 "correlation_id": "correlation-tool-result-1"
             }),
         )
@@ -631,7 +611,7 @@ async fn behavior_runtime_tool_result_payload_preserves_request_correlation_id()
         .iter()
         .find(|event| {
             event.subject == RUNTIME_TOOL_RESULT
-                && event.payload["request_id"] == serde_json::json!("tool-correlation-request-1")
+                && event.payload["task_id"] == serde_json::json!("task-runtime-tool-correlation-1")
         })
         .expect("Tool result payload correlation_id should equal request correlation_id");
 
@@ -641,7 +621,7 @@ async fn behavior_runtime_tool_result_payload_preserves_request_correlation_id()
     );
     assert_eq!(
         tool_result.correlation_id.as_deref(),
-        Some("correlation-tool-result-1")
+        Some(tool_request_envelope.id.as_str())
     );
     assert_eq!(
         tool_result.causation_id.as_deref(),
@@ -662,14 +642,12 @@ async fn behavior_runtime_llm_request_uses_last_message_content_without_prompt()
             RUNTIME_LLM_REQUEST.to_string(),
             "runtime-basic-test".to_string(),
             serde_json::json!({
-                "request_id": "llm-messages-request-1",
                 "task_id": "task-runtime-1",
                 "messages": [
                     { "role": "system", "content": "ignore setup" },
                     { "role": "user", "content": "summarize messages MVP" }
                 ],
-                "model": "mock-model",
-                "agent_id": "agent-1"
+                "model": "mock-model"
             }),
         )
         .await
@@ -682,7 +660,165 @@ async fn behavior_runtime_llm_request_uses_last_message_content_without_prompt()
         .expect("messages-only LLM request should publish runtime LLM response");
 
     assert_eq!(
-        llm_response.payload["text"],
+        llm_response.payload["message"]["content"],
         serde_json::json!("Mock response: summarize messages MVP")
+    );
+}
+
+#[tokio::test]
+async fn behavior_runtime_agent_lifecycle_events_update_worker_registry_state() {
+    let mut runtime = ThalamusRuntime::new(BasicBus::default());
+
+    runtime
+        .start()
+        .await
+        .expect("runtime should start with agent lifecycle handlers");
+
+    runtime
+        .publish(
+            RUNTIME_AGENT_READY.to_string(),
+            "runtime-basic-test".to_string(),
+            serde_json::to_value(RuntimeAgentReadyPayload {
+                agent_id: "agent-lifecycle-1".to_string(),
+                capabilities: vec!["llm".to_string(), "tool.echo".to_string()],
+            })
+            .expect("agent ready payload should serialize"),
+        )
+        .await
+        .expect("agent.ready should update worker registry");
+
+    let ready_registry = runtime.worker_registry().await;
+    let ready_worker = ready_registry
+        .lookup("agent-lifecycle-1")
+        .expect("agent.ready should register the worker");
+    assert_eq!(ready_worker.state, "ready");
+    assert_eq!(
+        ready_worker.capabilities,
+        vec!["llm".to_string(), "tool.echo".to_string()]
+    );
+
+    runtime
+        .publish(
+            RUNTIME_AGENT_EXIT.to_string(),
+            "runtime-basic-test".to_string(),
+            serde_json::to_value(RuntimeAgentExitPayload {
+                agent_id: "agent-lifecycle-1".to_string(),
+                reason: Some("completed".to_string()),
+            })
+            .expect("agent exit payload should serialize"),
+        )
+        .await
+        .expect("agent.exit should update worker registry");
+    assert_eq!(
+        runtime
+            .worker_registry()
+            .await
+            .lookup("agent-lifecycle-1")
+            .expect("agent.exit should preserve worker lookup")
+            .state,
+        thalamus_runtime::WorkerState::Exited
+    );
+
+    runtime
+        .publish(
+            RUNTIME_AGENT_ERROR.to_string(),
+            "runtime-basic-test".to_string(),
+            serde_json::to_value(RuntimeAgentErrorPayload {
+                error: serde_json::json!({ "message": "tool failed" }),
+            })
+            .expect("agent error payload should serialize"),
+        )
+        .await
+        .expect("agent.error should update worker registry");
+    assert_eq!(
+        runtime
+            .worker_registry()
+            .await
+            .lookup("agent-lifecycle-1")
+            .expect("agent.error should preserve worker lookup")
+            .state,
+        thalamus_runtime::WorkerState::Error
+    );
+}
+
+#[tokio::test]
+async fn behavior_runtime_llm_response_correlation_and_causation_equal_request_event_id() {
+    let mut runtime = ThalamusRuntime::new(BasicBus::default());
+
+    runtime
+        .start()
+        .await
+        .expect("runtime should start with default MVP handlers");
+
+    let request_event = runtime
+        .publish(
+            RUNTIME_LLM_REQUEST.to_string(),
+            "runtime-basic-test".to_string(),
+            serde_json::json!({
+                "task_id": "task-runtime-llm-causation-1",
+                "prompt": "summarize response causation MVP",
+                "model": "mock-model"
+            }),
+        )
+        .await
+        .expect("runtime should accept LLM request through the bus");
+
+    let published_events = runtime_basic_bus(&runtime).published_events().await;
+    let llm_response = published_events
+        .iter()
+        .find(|event| {
+            event.subject == RUNTIME_LLM_RESPONSE
+                && event.payload["task_id"] == serde_json::json!("task-runtime-llm-causation-1")
+        })
+        .expect("runtime.llm.response should be published for the request");
+
+    assert_eq!(
+        llm_response.correlation_id.as_deref(),
+        Some(request_event.id.as_str())
+    );
+    assert_eq!(
+        llm_response.causation_id.as_deref(),
+        Some(request_event.id.as_str())
+    );
+}
+
+#[tokio::test]
+async fn behavior_runtime_tool_result_correlation_and_causation_equal_request_event_id() {
+    let mut runtime = ThalamusRuntime::new(BasicBus::default());
+
+    runtime
+        .start()
+        .await
+        .expect("runtime should start with default MVP handlers");
+
+    let request_event = runtime
+        .publish(
+            RUNTIME_TOOL_REQUEST.to_string(),
+            "runtime-basic-test".to_string(),
+            serde_json::json!({
+                "task_id": "task-runtime-tool-causation-1",
+                "capability": "echo",
+                "input": { "text": "runtime causation MVP" }
+            }),
+        )
+        .await
+        .expect("runtime should accept tool request through the bus");
+
+    let published_events = runtime_basic_bus(&runtime).published_events().await;
+    let tool_result = published_events
+        .iter()
+        .find(|event| {
+            event.subject == RUNTIME_TOOL_RESULT
+                && event.payload["task_id"] == serde_json::json!("task-runtime-tool-causation-1")
+        })
+        .expect("runtime.tool.result should be published for the request");
+
+    assert_eq!(
+        tool_result.correlation_id.as_deref(),
+        Some(request_event.id.as_str())
+    );
+    assert_eq!(
+        tool_result.causation_id.as_deref(),
+        Some(request_event.id.as_str())
     );
 }

@@ -193,13 +193,12 @@ fn contract_runtime_payload_structs_round_trip_public_fields() {
 
     let task_assign = RuntimeTaskAssignPayload {
         task_id: "task-1".to_string(),
-        agent_id: Some("agent-1".to_string()),
-        parent_task_id: Some("parent-task-1".to_string()),
         input: json!({ "prompt": "run" }),
         capabilities: vec!["shell".to_string(), "llm".to_string()],
         metadata: json!({ "priority": "high" }),
+        agent_id: Some("agent-1".to_string()),
+        parent_task_id: Some("parent-task-1".to_string()),
         correlation_id: Some("correlation-1".to_string()),
-        options: json!({ "retry": 2 }),
     };
     let task_assign_json =
         serde_json::to_value(&task_assign).expect("task assign payload serializes");
@@ -214,7 +213,6 @@ fn contract_runtime_payload_structs_round_trip_public_fields() {
     let task_result = RuntimeTaskResultPayload {
         task_id: "task-1".to_string(),
         status: "completed".to_string(),
-        summary: Some("done".to_string()),
         result: Some(json!({ "ok": true })),
         error: json!({}),
         correlation_id: Some("correlation-1".to_string()),
@@ -245,14 +243,11 @@ fn contract_runtime_payload_structs_round_trip_public_fields() {
     assert_eq!(agent_exit_round_trip, agent_exit);
 
     let tool_request = RuntimeToolRequestPayload {
-        request_id: "request-1".to_string(),
-        task_id: Some("task-1".to_string()),
+        task_id: "task-1".to_string(),
         capability: "shell".to_string(),
         input: json!({ "cmd": "echo ok" }),
-        agent_id: Some("agent-1".to_string()),
-        correlation_id: Some("correlation-1".to_string()),
-        options: json!({ "cwd": "/workspace" }),
         timeout_seconds: Some(30),
+        correlation_id: Some("correlation-1".to_string()),
     };
     let tool_request_json =
         serde_json::to_value(&tool_request).expect("tool request payload serializes");
@@ -261,11 +256,9 @@ fn contract_runtime_payload_structs_round_trip_public_fields() {
     assert_eq!(tool_request_round_trip, tool_request);
 
     let tool_result = RuntimeToolResultPayload {
-        request_id: "request-1".to_string(),
-        task_id: Some("task-1".to_string()),
+        task_id: "task-1".to_string(),
         capability: "shell".to_string(),
-        status: "completed".to_string(),
-        output: Some(json!({ "stdout": "ok" })),
+        result: Some(json!({ "stdout": "ok" })),
         error: json!({}),
         correlation_id: Some("correlation-1".to_string()),
     };
@@ -276,15 +269,12 @@ fn contract_runtime_payload_structs_round_trip_public_fields() {
     assert_eq!(tool_result_round_trip, tool_result);
 
     let llm_request = RuntimeLLMRequestPayload {
-        request_id: "request-2".to_string(),
-        task_id: Some("task-2".to_string()),
+        task_id: "task-2".to_string(),
+        model: Some("model-a".to_string()),
         prompt: Some("summarize".to_string()),
         messages: vec![json!({ "role": "user", "content": "summarize" })],
-        model: Some("model-a".to_string()),
-        agent_id: Some("agent-2".to_string()),
-        correlation_id: Some("correlation-2".to_string()),
         options: json!({ "temperature": 0.2, "max_tokens": 128 }),
-        timeout_seconds: Some(60),
+        correlation_id: Some("correlation-2".to_string()),
     };
     let llm_request_json =
         serde_json::to_value(&llm_request).expect("llm request payload serializes");
@@ -293,10 +283,7 @@ fn contract_runtime_payload_structs_round_trip_public_fields() {
     assert_eq!(llm_request_round_trip, llm_request);
 
     let llm_response = RuntimeLLMResponsePayload {
-        request_id: "request-2".to_string(),
-        task_id: Some("task-2".to_string()),
-        status: "completed".to_string(),
-        text: Some("summary".to_string()),
+        task_id: "task-2".to_string(),
         model: Some("model-a".to_string()),
         message: json!({ "role": "assistant", "content": "summary" }),
         usage: json!({ "input_tokens": 10, "output_tokens": 2 }),
@@ -310,9 +297,7 @@ fn contract_runtime_payload_structs_round_trip_public_fields() {
     assert_eq!(llm_response_round_trip, llm_response);
 
     let agent_error = RuntimeAgentErrorPayload {
-        agent_id: Some("agent-3".to_string()),
         error: json!({ "message": "failed" }),
-        task_id: Some("task-3".to_string()),
     };
     let agent_error_json =
         serde_json::to_value(&agent_error).expect("agent error payload serializes");

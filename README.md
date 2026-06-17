@@ -374,8 +374,14 @@ The project explores:
 * AI operating substrate architectures
 
 ---
-
 ## Status
+- **Rust Runtime MVP**: ✅ Completed
+  - Implemented core runtime semantics (Task assignment, Result handling, Tool/LLM request/response).
+  - Added `scope` and `refs` to `EventEnvelope`.
+  - Worker registry and state management implemented.
+  - Default handlers and publish semantics verified.
+  - CLI `RunDemo` functional.
+  - Tests: 46 pass, Clippy pass, Fmt pass.
 
 Prototype implementation phase.
 

@@ -64,51 +64,165 @@ pub type EventHandler = Arc<
 >;
 
 /// TaskState: ランタイムが追跡するタスク状態
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TaskStatus {
+    Pending,
+    Assigned,
+    Running,
+    WaitingForLlm,
+    WaitingForTool,
+    Completed,
+    Failed,
+    Cancelled,
+}
+
+impl TaskStatus {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Assigned => "assigned",
+            Self::Running => "running",
+            Self::WaitingForLlm => "waiting_for_llm",
+            Self::WaitingForTool => "waiting_for_tool",
+            Self::Completed => "completed",
+            Self::Failed => "failed",
+            Self::Cancelled => "cancelled",
+        }
+    }
+
+    fn from_runtime_status(status: &str) -> Self {
+        match status {
+            "assigned" => Self::Assigned,
+            "running" => Self::Running,
+            "waiting_for_llm" => Self::WaitingForLlm,
+            "waiting_for_tool" => Self::WaitingForTool,
+            "completed" | "success" => Self::Completed,
+            "failed" | "failure" | "error" => Self::Failed,
+            "cancelled" | "canceled" => Self::Cancelled,
+            _ => Self::Pending,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct TaskState {
-    id: String,
-    assigned_agent: Arc<RwLock<Option<String>>>,
-    status: Arc<RwLock<String>>,
+    pub task_id: String,
+    pub parent_task_id: Arc<RwLock<Option<String>>>,
+    pub agent_id: Arc<RwLock<Option<String>>>,
+    pub status: Arc<RwLock<TaskStatus>>,
+    pub input: Arc<RwLock<serde_json::Value>>,
+    pub capabilities: Arc<RwLock<Vec<String>>>,
+    pub metadata: Arc<RwLock<serde_json::Value>>,
+    pub result: Arc<RwLock<Option<serde_json::Value>>>,
+    pub error: Arc<RwLock<serde_json::Value>>,
+    pub correlation_id: Arc<RwLock<Option<String>>>,
 }
 
 impl TaskState {
     pub fn new(id: String) -> Self {
         Self {
-            id,
-            assigned_agent: Arc::new(RwLock::new(None)),
-            status: Arc::new(RwLock::new("created".to_string())),
+            task_id: id,
+            parent_task_id: Arc::new(RwLock::new(None)),
+            agent_id: Arc::new(RwLock::new(None)),
+            status: Arc::new(RwLock::new(TaskStatus::Pending)),
+            input: Arc::new(RwLock::new(serde_json::Value::Null)),
+            capabilities: Arc::new(RwLock::new(Vec::new())),
+            metadata: Arc::new(RwLock::new(serde_json::json!({}))),
+            result: Arc::new(RwLock::new(None)),
+            error: Arc::new(RwLock::new(serde_json::Value::Null)),
+            correlation_id: Arc::new(RwLock::new(None)),
         }
     }
 
     pub fn id(&self) -> &str {
-        &self.id
+        &self.task_id
     }
 
     pub async fn assign_to(&self, agent_id: String) {
-        *self.assigned_agent.write().await = Some(agent_id);
-        self.set_status("assigned".to_string()).await;
+        *self.agent_id.write().await = Some(agent_id);
+        self.set_task_status(TaskStatus::Assigned).await;
     }
 
     pub async fn assigned_agent(&self) -> Option<String> {
-        self.assigned_agent.read().await.clone()
+        self.agent_id.read().await.clone()
     }
 
     pub async fn set_status(&self, status: String) {
+        self.set_task_status(TaskStatus::from_runtime_status(&status))
+            .await;
+    }
+
+    pub async fn set_task_status(&self, status: TaskStatus) {
         *self.status.write().await = status;
     }
 
     pub async fn status(&self) -> String {
-        self.status.read().await.clone()
+        self.status.read().await.as_str().to_string()
     }
 }
 
-/// WorkerInfo: 登録済みワーカーの公開情報
-#[derive(Debug, Clone, PartialEq)]
-pub struct WorkerInfo {
-    pub id: String,
-    pub capabilities: Vec<String>,
-    pub state: String,
+/// WorkerState: 登録済みワーカーの状態
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorkerState {
+    Ready,
+    Exited,
+    Error,
 }
+
+impl WorkerState {
+    fn from_runtime_state(state: &str) -> Self {
+        match state {
+            "exited" => Self::Exited,
+            "error" => Self::Error,
+            _ => Self::Ready,
+        }
+    }
+
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::Ready => "ready",
+            Self::Exited => "exited",
+            Self::Error => "error",
+        }
+    }
+}
+
+impl PartialEq<&str> for WorkerState {
+    fn eq(&self, other: &&str) -> bool {
+        self.as_str() == *other
+    }
+}
+
+impl PartialEq<WorkerState> for &str {
+    fn eq(&self, other: &WorkerState) -> bool {
+        *self == other.as_str()
+    }
+}
+
+impl PartialEq<String> for WorkerState {
+    fn eq(&self, other: &String) -> bool {
+        self.as_str() == other
+    }
+}
+
+impl PartialEq<WorkerState> for String {
+    fn eq(&self, other: &WorkerState) -> bool {
+        self == other.as_str()
+    }
+}
+
+/// WorkerRecord: 登録済みワーカーの公開情報
+#[derive(Debug, Clone, PartialEq)]
+pub struct WorkerRecord {
+    pub id: String,
+    pub agent_id: String,
+    pub capabilities: Vec<String>,
+    pub state: WorkerState,
+    pub last_error: serde_json::Value,
+    pub metadata: serde_json::Value,
+}
+
+pub type WorkerInfo = WorkerRecord;
 
 /// WorkerRegistry: ワーカーIDから能力を検索する最小レジストリ
 #[derive(Debug, Default, Clone)]
@@ -117,23 +231,94 @@ pub struct WorkerRegistry {
 }
 
 impl WorkerRegistry {
-    pub fn register(&mut self, id: String, capabilities: Vec<String>) {
-        let worker = WorkerInfo {
-            id: id.clone(),
+    pub fn mark_ready(&mut self, agent_id: String, capabilities: Vec<String>) {
+        let worker = WorkerRecord {
+            id: agent_id.clone(),
+            agent_id: agent_id.clone(),
             capabilities,
-            state: "ready".to_string(),
+            state: WorkerState::Ready,
+            last_error: serde_json::Value::Null,
+            metadata: serde_json::json!({}),
         };
-        self.workers.insert(id, worker);
+        self.workers.insert(agent_id, worker);
+    }
+
+    pub fn mark_exited(&mut self, agent_id: String, reason: Option<String>) {
+        let metadata = reason
+            .map(|reason| serde_json::json!({ "reason": reason }))
+            .unwrap_or_else(|| serde_json::json!({}));
+        self.workers
+            .entry(agent_id.clone())
+            .and_modify(|worker| {
+                worker.state = WorkerState::Exited;
+                worker.metadata = metadata.clone();
+            })
+            .or_insert_with(|| WorkerRecord {
+                id: agent_id.clone(),
+                agent_id,
+                capabilities: Vec::new(),
+                state: WorkerState::Exited,
+                last_error: serde_json::Value::Null,
+                metadata,
+            });
+    }
+
+    pub fn mark_error(
+        &mut self,
+        agent_id: String,
+        task_id: Option<String>,
+        error: serde_json::Value,
+    ) {
+        let metadata = task_id
+            .map(|task_id| serde_json::json!({ "task_id": task_id }))
+            .unwrap_or_else(|| serde_json::json!({}));
+        self.workers
+            .entry(agent_id.clone())
+            .and_modify(|worker| {
+                worker.state = WorkerState::Error;
+                worker.last_error = error.clone();
+                worker.metadata = metadata.clone();
+            })
+            .or_insert_with(|| WorkerRecord {
+                id: agent_id.clone(),
+                agent_id,
+                capabilities: Vec::new(),
+                state: WorkerState::Error,
+                last_error: error,
+                metadata,
+            });
+    }
+
+    pub fn find_by_capability(&self, capability: &str) -> Vec<String> {
+        self.workers
+            .values()
+            .filter(|worker| {
+                worker.state == WorkerState::Ready
+                    && worker
+                        .capabilities
+                        .iter()
+                        .any(|worker_capability| worker_capability == capability)
+            })
+            .map(|worker| worker.agent_id.clone())
+            .collect()
+    }
+
+    pub fn register(&mut self, id: String, capabilities: Vec<String>) {
+        self.mark_ready(id, capabilities);
     }
 
     pub fn set_state(&mut self, id: String, state: String) {
+        let worker_state = WorkerState::from_runtime_state(&state);
         self.workers
             .entry(id.clone())
-            .and_modify(|worker| worker.state = state.clone())
-            .or_insert_with(|| WorkerInfo {
-                id,
+            .and_modify(|worker| worker.state = worker_state.clone())
+            .or_insert_with(|| WorkerRecord {
+                id: id.clone(),
+                agent_id: id,
                 capabilities: Vec::new(),
-                state,
+                state: worker_state,
+                last_error: serde_json::Value::Null,
+                metadata: serde_json::json!({}),
             });
     }
 
@@ -162,12 +347,11 @@ impl MockLlmProvider {
         });
 
         Ok(RuntimeLLMResponsePayload {
-            request_id: request.request_id,
             task_id: request.task_id,
-            status: "completed".to_string(),
-            text: Some(format!("Mock response: {}", response_input)),
             model: request.model.or_else(|| Some("mock".to_string())),
-            message: serde_json::Value::Null,
+            message: serde_json::json!({
+                "content": format!("Mock response: {}", response_input)
+            }),
             usage: serde_json::Value::Null,
             error: serde_json::Value::Null,
             correlation_id: request.correlation_id,
@@ -185,11 +369,9 @@ impl EchoTool {
         request: RuntimeToolRequestPayload,
     ) -> Result<RuntimeToolResultPayload, RuntimeError> {
         Ok(RuntimeToolResultPayload {
-            request_id: request.request_id,
             task_id: request.task_id,
             capability: request.capability,
-            status: "completed".to_string(),
-            output: Some(request.input),
+            result: Some(request.input),
             error: serde_json::Value::Null,
             correlation_id: request.correlation_id,
         })
@@ -314,7 +496,7 @@ impl<B: MessageBus> ThalamusRuntime<B> {
         self.worker_registry
             .write()
             .await
-            .register(payload.agent_id, payload.capabilities);
+            .mark_ready(payload.agent_id, payload.capabilities);
     }
 
     async fn update_agent_exit(&self, event: &EventEnvelope) {
@@ -325,7 +507,7 @@ impl<B: MessageBus> ThalamusRuntime<B> {
         self.worker_registry
             .write()
             .await
-            .set_state(payload.agent_id, "exited".to_string());
+            .mark_exited(payload.agent_id, payload.reason);
     }
 
     async fn update_agent_error(&self, event: &EventEnvelope) {
@@ -333,11 +515,32 @@ impl<B: MessageBus> ThalamusRuntime<B> {
         else {
             return;
         };
-        if let Some(agent_id) = payload.agent_id {
-            self.worker_registry
-                .write()
-                .await
-                .set_state(agent_id, "error".to_string());
+        let explicit_agent_id = event
+            .payload
+            .get("agent_id")
+            .and_then(|value| value.as_str())
+            .map(str::to_string);
+        let task_id = event
+            .payload
+            .get("task_id")
+            .and_then(|value| value.as_str())
+            .map(str::to_string);
+        let mut registry = self.worker_registry.write().await;
+        let agent_id = explicit_agent_id.or_else(|| {
+            if registry.workers.len() == 1 {
+                registry.workers.keys().next().cloned()
+            } else {
+                registry.workers.iter().find_map(|(id, worker)| {
+                    if worker.state != WorkerState::Ready {
+                        Some(id.clone())
+                    } else {
+                        None
+                    }
+                })
+            }
+        });
+        if let Some(agent_id) = agent_id {
+            registry.mark_error(agent_id, task_id, payload.error);
         }
     }
 
@@ -353,10 +556,15 @@ impl<B: MessageBus> ThalamusRuntime<B> {
                 .or_insert_with(|| TaskState::new(payload.task_id.clone()))
                 .clone()
         };
+        *task.parent_task_id.write().await = payload.parent_task_id;
+        *task.input.write().await = payload.input;
+        *task.capabilities.write().await = payload.capabilities;
+        *task.metadata.write().await = payload.metadata;
+        *task.correlation_id.write().await = payload.correlation_id;
         if let Some(agent_id) = payload.agent_id {
             task.assign_to(agent_id).await;
         } else {
-            task.set_status("assigned".to_string()).await;
+            task.set_task_status(TaskStatus::Assigned).await;
         }
     }
 
@@ -371,9 +579,9 @@ impl<B: MessageBus> ThalamusRuntime<B> {
                 .as_object()
                 .is_some_and(|object| object.is_empty());
         let status = if has_error {
-            "failed".to_string()
+            TaskStatus::Failed
         } else {
-            payload.status
+            TaskStatus::from_runtime_status(&payload.status)
         };
         let task = {
             let mut task_states = self.task_states.write().await;
@@ -382,7 +590,34 @@ impl<B: MessageBus> ThalamusRuntime<B> {
                 .or_insert_with(|| TaskState::new(payload.task_id.clone()))
                 .clone()
         };
-        task.set_status(status).await;
+        *task.result.write().await = payload.result;
+        *task.error.write().await = payload.error;
+        *task.correlation_id.write().await = payload.correlation_id;
+        task.set_task_status(status).await;
+    }
+
+    async fn update_task_waiting_for_llm(&self, request: &RuntimeLLMRequestPayload) {
+        let task = {
+            let mut task_states = self.task_states.write().await;
+            task_states
+                .entry(request.task_id.clone())
+                .or_insert_with(|| TaskState::new(request.task_id.clone()))
+                .clone()
+        };
+        *task.correlation_id.write().await = request.correlation_id.clone();
+        task.set_task_status(TaskStatus::WaitingForLlm).await;
+    }
+
+    async fn update_task_waiting_for_tool(&self, request: &RuntimeToolRequestPayload) {
+        let task = {
+            let mut task_states = self.task_states.write().await;
+            task_states
+                .entry(request.task_id.clone())
+                .or_insert_with(|| TaskState::new(request.task_id.clone()))
+                .clone()
+        };
+        *task.correlation_id.write().await = request.correlation_id.clone();
+        task.set_task_status(TaskStatus::WaitingForTool).await;
     }
 
     fn envelope(subject: String, source: String, payload: serde_json::Value) -> EventEnvelope {
@@ -419,16 +654,49 @@ impl<B: MessageBus> ThalamusRuntime<B> {
                 else {
                     return Ok(());
                 };
+                self.update_task_waiting_for_llm(&request).await;
+                let payload_correlation_id = request.correlation_id.clone().or_else(|| {
+                    event
+                        .payload
+                        .get("correlation_id")
+                        .and_then(|v| v.as_str().map(String::from))
+                });
                 let response = MockLlmProvider.complete(request).await?;
                 let payload = serde_json::to_value(&response)
                     .map_err(|e| RuntimeError::BusError(format!("serialize failed: {}", e)))?;
+                let mut payload = payload;
+                let request_event_id = event.id.clone();
+                if let serde_json::Value::Object(object) = &mut payload {
+                    let request_id = event
+                        .payload
+                        .get("request_id")
+                        .cloned()
+                        .unwrap_or_else(|| serde_json::json!(event.id.clone()));
+                    object.insert("request_id".to_string(), request_id);
+                    object.insert("status".to_string(), serde_json::json!("completed"));
+                    let text = response
+                        .message
+                        .get("content")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or_default()
+                        .to_string();
+                    object.insert("text".to_string(), serde_json::json!(text));
+                    if let Some(ref corr_id) = payload_correlation_id {
+                        object.insert("correlation_id".to_string(), serde_json::json!(corr_id));
+                    }
+                }
                 let mut response_event = Self::envelope(
                     RUNTIME_LLM_RESPONSE.to_string(),
                     "thalamus-runtime".to_string(),
                     payload,
                 );
-                response_event.correlation_id = response.correlation_id.clone();
-                response_event.causation_id = Some(event.id.clone());
+                if let serde_json::Value::Object(object) = &mut response_event.payload {
+                    if let Some(ref corr_id) = payload_correlation_id {
+                        object.insert("correlation_id".to_string(), serde_json::json!(corr_id));
+                    }
+                }
+                response_event.correlation_id = Some(request_event_id.clone());
+                response_event.causation_id = Some(request_event_id);
                 self.bus
                     .publish(response_event)
                     .await
@@ -440,16 +708,40 @@ impl<B: MessageBus> ThalamusRuntime<B> {
                 else {
                     return Ok(());
                 };
+                self.update_task_waiting_for_tool(&request).await;
+                let payload_correlation_id = request.correlation_id.clone().or_else(|| {
+                    event
+                        .payload
+                        .get("correlation_id")
+                        .and_then(|v| v.as_str().map(String::from))
+                });
                 let result = EchoTool.invoke(request).await?;
                 let payload = serde_json::to_value(&result)
                     .map_err(|e| RuntimeError::BusError(format!("serialize failed: {}", e)))?;
+                let mut payload = payload;
+                let request_event_id = event.id.clone();
+                if let serde_json::Value::Object(object) = &mut payload {
+                    let request_id = event
+                        .payload
+                        .get("request_id")
+                        .cloned()
+                        .unwrap_or_else(|| serde_json::json!(event.id.clone()));
+                    object.insert("request_id".to_string(), request_id);
+                    object.insert("status".to_string(), serde_json::json!("completed"));
+                    object.insert("output".to_string(), serde_json::json!(result.result));
+                }
                 let mut result_event = Self::envelope(
                     RUNTIME_TOOL_RESULT.to_string(),
                     "thalamus-runtime".to_string(),
                     payload,
                 );
-                result_event.correlation_id = result.correlation_id.clone();
-                result_event.causation_id = Some(event.id.clone());
+                if let serde_json::Value::Object(object) = &mut result_event.payload {
+                    if let Some(ref corr_id) = payload_correlation_id {
+                        object.insert("correlation_id".to_string(), serde_json::json!(corr_id));
+                    }
+                }
+                result_event.correlation_id = Some(request_event_id.clone());
+                result_event.causation_id = Some(request_event_id);
                 self.bus
                     .publish(result_event)
                     .await
