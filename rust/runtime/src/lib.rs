@@ -346,11 +346,15 @@ impl MockLlmProvider {
                 .to_string()
         });
 
+        let text = format!("Mock response: {}", response_input);
         Ok(RuntimeLLMResponsePayload {
-            task_id: request.task_id,
+            task_id: request.task_id.clone(),
             model: request.model.or_else(|| Some("mock".to_string())),
+            request_id: request.correlation_id.clone(),
+            status: "completed".to_string(),
+            text: Some(text.clone()),
             message: serde_json::json!({
-                "content": format!("Mock response: {}", response_input)
+                "content": text
             }),
             usage: serde_json::Value::Null,
             error: serde_json::Value::Null,
@@ -369,8 +373,11 @@ impl EchoTool {
         request: RuntimeToolRequestPayload,
     ) -> Result<RuntimeToolResultPayload, RuntimeError> {
         Ok(RuntimeToolResultPayload {
-            task_id: request.task_id,
+            task_id: request.task_id.clone(),
             capability: request.capability,
+            request_id: request.correlation_id.clone(),
+            status: "completed".to_string(),
+            output: Some(request.input.clone()),
             result: Some(request.input),
             error: serde_json::Value::Null,
             correlation_id: request.correlation_id,
@@ -655,7 +662,7 @@ impl<B: MessageBus> ThalamusRuntime<B> {
                     return Ok(());
                 };
                 self.update_task_waiting_for_llm(&request).await;
-                let payload_correlation_id = request.correlation_id.clone().or_else(|| {
+                let _payload_correlation_id = request.correlation_id.clone().or_else(|| {
                     event
                         .payload
                         .get("correlation_id")
@@ -664,37 +671,12 @@ impl<B: MessageBus> ThalamusRuntime<B> {
                 let response = MockLlmProvider.complete(request).await?;
                 let payload = serde_json::to_value(&response)
                     .map_err(|e| RuntimeError::BusError(format!("serialize failed: {}", e)))?;
-                let mut payload = payload;
                 let request_event_id = event.id.clone();
-                if let serde_json::Value::Object(object) = &mut payload {
-                    let request_id = event
-                        .payload
-                        .get("request_id")
-                        .cloned()
-                        .unwrap_or_else(|| serde_json::json!(event.id.clone()));
-                    object.insert("request_id".to_string(), request_id);
-                    object.insert("status".to_string(), serde_json::json!("completed"));
-                    let text = response
-                        .message
-                        .get("content")
-                        .and_then(|value| value.as_str())
-                        .unwrap_or_default()
-                        .to_string();
-                    object.insert("text".to_string(), serde_json::json!(text));
-                    if let Some(ref corr_id) = payload_correlation_id {
-                        object.insert("correlation_id".to_string(), serde_json::json!(corr_id));
-                    }
-                }
                 let mut response_event = Self::envelope(
                     RUNTIME_LLM_RESPONSE.to_string(),
                     "thalamus-runtime".to_string(),
                     payload,
                 );
-                if let serde_json::Value::Object(object) = &mut response_event.payload {
-                    if let Some(ref corr_id) = payload_correlation_id {
-                        object.insert("correlation_id".to_string(), serde_json::json!(corr_id));
-                    }
-                }
                 response_event.correlation_id = Some(request_event_id.clone());
                 response_event.causation_id = Some(request_event_id);
                 self.bus
@@ -709,7 +691,7 @@ impl<B: MessageBus> ThalamusRuntime<B> {
                     return Ok(());
                 };
                 self.update_task_waiting_for_tool(&request).await;
-                let payload_correlation_id = request.correlation_id.clone().or_else(|| {
+                let _payload_correlation_id = request.correlation_id.clone().or_else(|| {
                     event
                         .payload
                         .get("correlation_id")
@@ -718,28 +700,12 @@ impl<B: MessageBus> ThalamusRuntime<B> {
                 let result = EchoTool.invoke(request).await?;
                 let payload = serde_json::to_value(&result)
                     .map_err(|e| RuntimeError::BusError(format!("serialize failed: {}", e)))?;
-                let mut payload = payload;
                 let request_event_id = event.id.clone();
-                if let serde_json::Value::Object(object) = &mut payload {
-                    let request_id = event
-                        .payload
-                        .get("request_id")
-                        .cloned()
-                        .unwrap_or_else(|| serde_json::json!(event.id.clone()));
-                    object.insert("request_id".to_string(), request_id);
-                    object.insert("status".to_string(), serde_json::json!("completed"));
-                    object.insert("output".to_string(), serde_json::json!(result.result));
-                }
                 let mut result_event = Self::envelope(
                     RUNTIME_TOOL_RESULT.to_string(),
                     "thalamus-runtime".to_string(),
                     payload,
                 );
-                if let serde_json::Value::Object(object) = &mut result_event.payload {
-                    if let Some(ref corr_id) = payload_correlation_id {
-                        object.insert("correlation_id".to_string(), serde_json::json!(corr_id));
-                    }
-                }
                 result_event.correlation_id = Some(request_event_id.clone());
                 result_event.causation_id = Some(request_event_id);
                 self.bus

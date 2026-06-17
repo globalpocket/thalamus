@@ -56,6 +56,10 @@ pub struct RuntimeToolRequestPayload {
 pub struct RuntimeToolResultPayload {
     pub task_id: String,
     pub capability: String,
+    pub request_id: Option<String>,
+    pub status: String,
+    pub output: Option<Value>,
+    #[serde(default)]
     pub result: Option<Value>,
     #[serde(default)]
     pub error: Value,
@@ -78,6 +82,9 @@ pub struct RuntimeLLMRequestPayload {
 pub struct RuntimeLLMResponsePayload {
     pub task_id: String,
     pub model: Option<String>,
+    pub request_id: Option<String>,
+    pub status: String,
+    pub text: Option<String>,
     #[serde(default)]
     pub message: Value,
     #[serde(default)]

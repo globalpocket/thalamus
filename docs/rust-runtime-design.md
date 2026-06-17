@@ -4,7 +4,7 @@ This document records the current Rust Runtime MVP behavior. It describes only t
 
 ## Scope
 
-The Rust MVP covers four crates in the Cargo workspace:
+The Rust MVP covers five crates in the Cargo workspace (protocol, bus, runtime, cli, sdk). MVP core is protocol/bus/runtime/cli; sdk is FFI/SDK skeleton.
 
 * [`rust/protocol`](../rust/protocol/) defines the event envelope, subject constants, and runtime payload structures.
 * [`rust/bus`](../rust/bus/) provides an in-memory publish/subscribe bus for local runtime execution and tests.
@@ -85,17 +85,11 @@ The current MVP semantics are implemented and verified by the Rust workspace che
 
 [`ThalamusCLI`](../rust/cli/src/lib.rs:11) defines the command-line surface. [`CLICommand`](../rust/cli/src/lib.rs:23) includes start, stop, status, list-agents, and [`RunDemo`](../rust/cli/src/lib.rs:37).
 
-[`ThalamusCLI::run()`](../rust/cli/src/lib.rs:60) currently completes the local command paths without external services. [`RunDemo`](../rust/cli/src/lib.rs:90) is the MVP demo command path: it creates [`ThalamusRuntime`](../rust/runtime/src/lib.rs:199) with [`BasicBus`](../rust/bus/src/lib.rs:84), starts the runtime, publishes a [`RuntimeLLMRequestPayload`](../rust/protocol/src/payload.rs:75) with the prompt `summarize runtime MVP`, and publishes a [`RuntimeToolRequestPayload`](../rust/protocol/src/payload.rs:50) with `{ "text": "runtime MVP" }`. The observed CLI output is deterministic: `Runtime Event Flow`, `Mock response: summarize runtime MVP`, and the echo tool JSON outcome. The CLI manifest declares [`thalamus-protocol`](../rust/cli/Cargo.toml:8) and [`serde_json`](../rust/cli/Cargo.toml:11). The current CLI behavior is covered by the Rust workspace test artifact [`cargo-test-after-messages.log`](../artifacts/test-results/cargo-test-after-messages.log:1).
+[`ThalamusCLI::run()`](../rust/cli/src/lib.rs:60) currently completes the local command paths without external services. [`RunDemo`](../rust/cli/src/lib.rs:90) is the MVP demo command path: it creates [`ThalamusRuntime`](../rust/runtime/src/lib.rs:199) with [`BasicBus`](../rust/bus/src/lib.rs:84), starts the runtime, publishes a [`RuntimeLLMRequestPayload`](../rust/protocol/src/payload.rs:75) with the prompt `summarize runtime MVP`, and publishes a [`RuntimeToolRequestPayload`](../rust/protocol/src/payload.rs:50) with `{ "text": "runtime MVP" }`. The observed CLI output is deterministic: `Runtime Event Flow`, `Mock response: summarize runtime MVP`, and the echo tool JSON outcome. The CLI manifest declares [`thalamus-protocol`](../rust/cli/Cargo.toml:8) and [`serde_json`](../rust/cli/Cargo.toml:11).
 
 ## Verified Commands
 
-The latest Rust verification artifacts for this MVP after messages support are:
-
-* [`cargo fmt`](../artifacts/build/cargo-fmt-after-messages.log:1)
-* [`cargo clippy`](../artifacts/build/cargo-clippy-after-messages.log:1)
-* [`cargo test`](../artifacts/test-results/cargo-test-after-messages.log:1)
-
-The artifacts show formatting, linting, and test execution completed successfully, including the messages-only LLM request behavior. No coverage percentage, security audit status, or performance benchmark value is claimed here because those measurements are not part of the provided verification artifacts.
+Verification commands: `cd rust && cargo fmt && cargo clippy --all-targets -- -D warnings && cargo test`.
 
 ## Non-goals
 

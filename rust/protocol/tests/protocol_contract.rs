@@ -258,6 +258,9 @@ fn contract_runtime_payload_structs_round_trip_public_fields() {
     let tool_result = RuntimeToolResultPayload {
         task_id: "task-1".to_string(),
         capability: "shell".to_string(),
+        request_id: Some("req-1".to_string()),
+        status: "completed".to_string(),
+        output: Some(json!({ "stdout": "ok" })),
         result: Some(json!({ "stdout": "ok" })),
         error: json!({}),
         correlation_id: Some("correlation-1".to_string()),
@@ -285,6 +288,9 @@ fn contract_runtime_payload_structs_round_trip_public_fields() {
     let llm_response = RuntimeLLMResponsePayload {
         task_id: "task-2".to_string(),
         model: Some("model-a".to_string()),
+        request_id: Some("req-2".to_string()),
+        status: "completed".to_string(),
+        text: Some("summary".to_string()),
         message: json!({ "role": "assistant", "content": "summary" }),
         usage: json!({ "input_tokens": 10, "output_tokens": 2 }),
         error: json!({}),
@@ -304,4 +310,49 @@ fn contract_runtime_payload_structs_round_trip_public_fields() {
     let agent_error_round_trip: RuntimeAgentErrorPayload =
         serde_json::from_value(agent_error_json).expect("agent error payload deserializes");
     assert_eq!(agent_error_round_trip, agent_error);
+}
+
+#[test]
+fn llm_response_payload_struct_matches_published_json() {
+    let payload = RuntimeLLMResponsePayload {
+        task_id: "task-1".to_string(),
+        model: Some("mock".to_string()),
+        request_id: Some("req-1".to_string()),
+        status: "completed".to_string(),
+        text: Some("Hello from mock".to_string()),
+        message: json!({"content": "Hello from mock"}),
+        usage: json!({}),
+        error: json!({}),
+        correlation_id: Some("corr-1".to_string()),
+    };
+    let json = serde_json::to_value(&payload).expect("serializes");
+    assert_eq!(json["task_id"], "task-1");
+    assert_eq!(json["model"], "mock");
+    assert_eq!(json["request_id"], "req-1");
+    assert_eq!(json["status"], "completed");
+    assert_eq!(json["text"], "Hello from mock");
+    assert_eq!(json["message"]["content"], "Hello from mock");
+    assert_eq!(json["correlation_id"], "corr-1");
+}
+
+#[test]
+fn tool_result_payload_struct_matches_published_json() {
+    let payload = RuntimeToolResultPayload {
+        task_id: "task-1".to_string(),
+        capability: "shell".to_string(),
+        request_id: Some("req-1".to_string()),
+        status: "completed".to_string(),
+        output: Some(json!({"echo": "test"})),
+        result: Some(json!({"echo": "test"})),
+        error: json!({}),
+        correlation_id: Some("corr-1".to_string()),
+    };
+    let json = serde_json::to_value(&payload).expect("serializes");
+    assert_eq!(json["task_id"], "task-1");
+    assert_eq!(json["capability"], "shell");
+    assert_eq!(json["request_id"], "req-1");
+    assert_eq!(json["status"], "completed");
+    assert_eq!(json["output"]["echo"], "test");
+    assert_eq!(json["result"]["echo"], "test");
+    assert_eq!(json["correlation_id"], "corr-1");
 }

@@ -233,7 +233,8 @@ The intelligence of the system emerges from runtime coordination and event propa
 thalamus/
 ├─ protocol/
 ├─ schemas/
-├─ runtime/
+├─ runtime/        # Python reference implementation
+├─ rust/           # Rust Runtime MVP workspace
 ├─ sdk/
 ├─ supervisor/
 ├─ docs/
@@ -399,7 +400,7 @@ Implemented today:
 * Rust runtime exposes [`TaskState`](rust/runtime/src/lib.rs:66), [`WorkerRegistry`](rust/runtime/src/lib.rs:113), [`MockLlmProvider`](rust/runtime/src/lib.rs:145), [`EchoTool`](rust/runtime/src/lib.rs:178), default MVP subject registration, LLM request input from `prompt` or the last `messages` content, payload-level `correlation_id` preservation, local agent/task state updates, and bus-mediated publication of [`runtime.llm.response`](rust/protocol/src/subject.rs:12) and [`runtime.tool.result`](rust/protocol/src/subject.rs:14).
 * [`ThalamusRuntime::publish()`](rust/runtime/src/lib.rs:530) first records accepted events through the bus, then applies default runtime behavior for agent ready/exit/error, task assign/result, LLM request, and tool request subjects; accepted events remain observable even when there are no external subscribers.
 * Rust CLI includes [`RunDemo`](rust/cli/src/lib.rs:37), which starts a local runtime, publishes LLM/tool request payloads through the [`BasicBus`](rust/bus/src/lib.rs:84) path, and prints `Runtime Event Flow`, `Mock response: summarize runtime MVP`, and the echo tool JSON outcome.
-* Rust workspace latest verification artifacts after messages support are available for [`cargo fmt`](artifacts/build/cargo-fmt-after-messages.log:1), [`cargo clippy`](artifacts/build/cargo-clippy-after-messages.log:1), and [`cargo test`](artifacts/test-results/cargo-test-after-messages.log:1).
+* Rust workspace verification commands: `cd rust && cargo fmt && cargo clippy --all-targets -- -D warnings && cargo test`.
 * Rust SDK FFI subscription rejects a NULL callback with `-1`; callers must pass a valid callback function pointer to `thalamus_subscribe()`. The callback payload pointer is NUL-terminated, non-null, and valid only for the duration of the callback invocation.
 
 Not implemented yet (still design-level in docs):
