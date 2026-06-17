@@ -306,6 +306,8 @@ async fn runtime_agent_ready_exit_error_updates_registry() {
             RUNTIME_AGENT_ERROR.to_string(),
             "runtime-basic-test".to_string(),
             serde_json::to_value(RuntimeAgentErrorPayload {
+                agent_id: "agent-1".to_string(),
+                task_id: "task-1".to_string(),
                 error: serde_json::json!({ "message": "failed" }),
             })
             .expect("agent error payload should serialize"),
@@ -422,6 +424,7 @@ async fn behavior_mock_llm_provider_and_echo_tool_mediate_runtime_requests() {
     let echo_tool = EchoTool;
     let llm_request = RuntimeLLMRequestPayload {
         task_id: "task-runtime-1".to_string(),
+        request_id: None,
         model: Some("mock-model".to_string()),
         prompt: Some("summarize runtime MVP".to_string()),
         messages: Vec::new(),
@@ -430,6 +433,7 @@ async fn behavior_mock_llm_provider_and_echo_tool_mediate_runtime_requests() {
     };
     let tool_request = RuntimeToolRequestPayload {
         task_id: "task-runtime-1".to_string(),
+        request_id: None,
         capability: "echo".to_string(),
         input: serde_json::json!({ "text": "runtime MVP" }),
         timeout_seconds: None,
@@ -724,6 +728,8 @@ async fn behavior_runtime_agent_lifecycle_events_update_worker_registry_state() 
             RUNTIME_AGENT_ERROR.to_string(),
             "runtime-basic-test".to_string(),
             serde_json::to_value(RuntimeAgentErrorPayload {
+                agent_id: "agent-lifecycle-1".to_string(),
+                task_id: "task-lifecycle-1".to_string(),
                 error: serde_json::json!({ "message": "tool failed" }),
             })
             .expect("agent error payload should serialize"),

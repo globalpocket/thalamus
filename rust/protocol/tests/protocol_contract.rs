@@ -244,6 +244,7 @@ fn contract_runtime_payload_structs_round_trip_public_fields() {
 
     let tool_request = RuntimeToolRequestPayload {
         task_id: "task-1".to_string(),
+        request_id: None,
         capability: "shell".to_string(),
         input: json!({ "cmd": "echo ok" }),
         timeout_seconds: Some(30),
@@ -273,6 +274,7 @@ fn contract_runtime_payload_structs_round_trip_public_fields() {
 
     let llm_request = RuntimeLLMRequestPayload {
         task_id: "task-2".to_string(),
+        request_id: None,
         model: Some("model-a".to_string()),
         prompt: Some("summarize".to_string()),
         messages: vec![json!({ "role": "user", "content": "summarize" })],
@@ -303,6 +305,8 @@ fn contract_runtime_payload_structs_round_trip_public_fields() {
     assert_eq!(llm_response_round_trip, llm_response);
 
     let agent_error = RuntimeAgentErrorPayload {
+        agent_id: "agent-1".to_string(),
+        task_id: "task-1".to_string(),
         error: json!({ "message": "failed" }),
     };
     let agent_error_json =

@@ -46,6 +46,8 @@ pub struct RuntimeAgentExitPayload {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RuntimeToolRequestPayload {
     pub task_id: String,
+    #[serde(default)]
+    pub request_id: Option<String>,
     pub capability: String,
     pub input: Value,
     pub timeout_seconds: Option<u64>,
@@ -69,6 +71,8 @@ pub struct RuntimeToolResultPayload {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RuntimeLLMRequestPayload {
     pub task_id: String,
+    #[serde(default)]
+    pub request_id: Option<String>,
     pub model: Option<String>,
     pub prompt: Option<String>,
     #[serde(default)]
@@ -96,6 +100,8 @@ pub struct RuntimeLLMResponsePayload {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RuntimeAgentErrorPayload {
+    pub agent_id: String,
+    pub task_id: String,
     #[serde(default)]
     pub error: Value,
 }

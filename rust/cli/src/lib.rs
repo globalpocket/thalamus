@@ -227,6 +227,7 @@ impl ThalamusCLI {
                         "thalamus-cli".to_string(),
                         serde_json::to_value(RuntimeLLMRequestPayload {
                             task_id: task_id.clone(),
+                            request_id: None,
                             prompt: Some(llm_prompt.to_string()),
                             messages: Vec::new(),
                             model: Some("mock-model".to_string()),
@@ -243,6 +244,7 @@ impl ThalamusCLI {
                         "thalamus-cli".to_string(),
                         serde_json::to_value(RuntimeToolRequestPayload {
                             task_id: task_id.clone(),
+                            request_id: None,
                             capability: "echo".to_string(),
                             input: tool_input.clone(),
                             correlation_id: Some(correlation_id.clone()),

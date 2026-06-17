@@ -65,6 +65,8 @@ Cingulater
 Thalamus Runtime
 (Event-driven Cognitive Coordination Layer)
  ↓
+Rust Runtime / Python Runtime
+ ↓
 Sandboxed Runtime Workers
  ↓
 mcp-routing-gateway
