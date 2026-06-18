@@ -828,3 +828,33 @@ async fn behavior_runtime_tool_result_correlation_and_causation_equal_request_ev
         Some(request_event.id.as_str())
     );
 }
+
+#[tokio::test]
+async fn behavior_runtime_agent_error_without_agent_id_does_not_modify_registry() {
+    // agent_id: None の場合、worker registry を勝手に変更しないことを確認
+    let mut runtime = ThalamusRuntime::new(BasicBus::default());
+
+    runtime.start().await.expect("runtime should start");
+
+    // agent_id: None で agent.error を publish
+    runtime
+        .publish(
+            RUNTIME_AGENT_ERROR.to_string(),
+            "runtime-basic-test".to_string(),
+            serde_json::to_value(RuntimeAgentErrorPayload {
+                agent_id: None,
+                task_id: Some("task-startup-failed".to_string()),
+                error: serde_json::json!({ "message": "runtime startup failed" }),
+            })
+            .expect("agent error payload without agent_id should serialize"),
+        )
+        .await
+        .expect("agent error publish without agent_id should succeed");
+
+    // registry に agent が登録されていないことを確認
+    let registry = runtime.worker_registry().await;
+    assert!(
+        registry.lookup("unknown").is_none(),
+        "worker registry should not have unknown agents when agent_id is None"
+    );
+}

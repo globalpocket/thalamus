@@ -167,11 +167,6 @@ impl<B: MessageBus> ThalamusRuntime<B> {
         else {
             return;
         };
-        let task_id = event
-            .payload
-            .get("task_id")
-            .and_then(|value| value.as_str())
-            .map(str::to_string);
         // Use payload.agent_id if present. Do not guess a worker when agent_id is unknown.
         let agent_id = payload.agent_id.clone().or_else(|| {
             event
@@ -182,7 +177,7 @@ impl<B: MessageBus> ThalamusRuntime<B> {
         });
         if let Some(agent_id) = agent_id {
             let mut registry = self.worker_registry.write().await;
-            registry.mark_error(agent_id, task_id, payload.error);
+            registry.mark_error(agent_id, payload.task_id, payload.error);
         }
     }
 

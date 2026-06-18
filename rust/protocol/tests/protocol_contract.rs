@@ -305,8 +305,8 @@ fn contract_runtime_payload_structs_round_trip_public_fields() {
     assert_eq!(llm_response_round_trip, llm_response);
 
     let agent_error = RuntimeAgentErrorPayload {
-        agent_id: "agent-1".to_string(),
-        task_id: "task-1".to_string(),
+        agent_id: Some("agent-1".to_string()),
+        task_id: Some("task-1".to_string()),
         error: json!({ "message": "failed" }),
     };
     let agent_error_json =
@@ -314,6 +314,37 @@ fn contract_runtime_payload_structs_round_trip_public_fields() {
     let agent_error_round_trip: RuntimeAgentErrorPayload =
         serde_json::from_value(agent_error_json).expect("agent error payload deserializes");
     assert_eq!(agent_error_round_trip, agent_error);
+}
+
+#[test]
+fn contract_runtime_agent_error_payload_roundtrip_with_optional_fields() {
+    // agent_id: Some, task_id: Some
+    let agent_error_with_ids = RuntimeAgentErrorPayload {
+        agent_id: Some("agent-1".to_string()),
+        task_id: Some("task-1".to_string()),
+        error: json!({ "message": "failed" }),
+    };
+    let json_with_ids = serde_json::to_value(&agent_error_with_ids)
+        .expect("agent error payload with ids serializes");
+    let round_trip_with_ids: RuntimeAgentErrorPayload =
+        serde_json::from_value(json_with_ids).expect("agent error payload with ids deserializes");
+    assert_eq!(round_trip_with_ids, agent_error_with_ids);
+    assert_eq!(round_trip_with_ids.agent_id, Some("agent-1".to_string()));
+    assert_eq!(round_trip_with_ids.task_id, Some("task-1".to_string()));
+
+    // agent_id: None, task_id: None (startup/runtime-level error without agent context)
+    let agent_error_without_ids = RuntimeAgentErrorPayload {
+        agent_id: None,
+        task_id: None,
+        error: json!({ "message": "runtime startup failed" }),
+    };
+    let json_without_ids = serde_json::to_value(&agent_error_without_ids)
+        .expect("agent error payload without ids serializes");
+    let round_trip_without_ids: RuntimeAgentErrorPayload = serde_json::from_value(json_without_ids)
+        .expect("agent error payload without ids deserializes");
+    assert_eq!(round_trip_without_ids, agent_error_without_ids);
+    assert_eq!(round_trip_without_ids.agent_id, None);
+    assert_eq!(round_trip_without_ids.task_id, None);
 }
 
 #[test]

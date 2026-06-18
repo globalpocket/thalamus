@@ -384,7 +384,7 @@ The project explores:
   - Worker registry and state management implemented.
   - Default handlers and publish semantics verified.
   - CLI `RunDemo` functional.
-  - Tests: 46 pass, Clippy pass, Fmt pass.
+  - Tests: 46 pass (local verification), Clippy pass, Fmt pass.
 
 Prototype implementation phase.
 
