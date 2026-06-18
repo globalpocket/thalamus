@@ -306,8 +306,8 @@ async fn runtime_agent_ready_exit_error_updates_registry() {
             RUNTIME_AGENT_ERROR.to_string(),
             "runtime-basic-test".to_string(),
             serde_json::to_value(RuntimeAgentErrorPayload {
-                agent_id: "agent-1".to_string(),
-                task_id: "task-1".to_string(),
+                agent_id: Some("agent-1".to_string()),
+                task_id: Some("task-1".to_string()),
                 error: serde_json::json!({ "message": "failed" }),
             })
             .expect("agent error payload should serialize"),
@@ -728,8 +728,8 @@ async fn behavior_runtime_agent_lifecycle_events_update_worker_registry_state() 
             RUNTIME_AGENT_ERROR.to_string(),
             "runtime-basic-test".to_string(),
             serde_json::to_value(RuntimeAgentErrorPayload {
-                agent_id: "agent-lifecycle-1".to_string(),
-                task_id: "task-lifecycle-1".to_string(),
+                agent_id: Some("agent-lifecycle-1".to_string()),
+                task_id: Some("task-lifecycle-1".to_string()),
                 error: serde_json::json!({ "message": "tool failed" }),
             })
             .expect("agent error payload should serialize"),

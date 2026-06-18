@@ -100,8 +100,12 @@ pub struct RuntimeLLMResponsePayload {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RuntimeAgentErrorPayload {
-    pub agent_id: String,
-    pub task_id: String,
+    /// Agent identifier. Optional because runtime-level errors may not have an agent.
+    #[serde(default)]
+    pub agent_id: Option<String>,
+    /// Task identifier. Optional because startup failures may not have a task.
+    #[serde(default)]
+    pub task_id: Option<String>,
     #[serde(default)]
     pub error: Value,
 }
