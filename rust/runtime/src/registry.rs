@@ -134,7 +134,7 @@ impl WorkerRegistry {
                 worker.metadata = metadata_clone.clone();
             })
             .or_insert_with(|| WorkerRecord {
-                id: String::new(),
+                id: agent_id.clone(),
                 agent_id,
                 capabilities: Vec::new(),
                 state: WorkerState::Error,

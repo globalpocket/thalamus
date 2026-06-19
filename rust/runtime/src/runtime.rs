@@ -21,7 +21,7 @@ use crate::error::RuntimeError;
 use crate::llm::MockLlmProvider;
 use crate::registry::WorkerRegistry;
 use crate::state::{RuntimeState, TaskHandle, TaskState, TaskStatus};
-use crate::tool::EchoTool;
+use crate::tool::{EchoTool, ToolRegistry};
 
 /// EventHandler: イベントハンドラーの型定義
 pub type EventHandler = Arc<
@@ -38,6 +38,7 @@ pub struct ThalamusRuntime<B: MessageBus> {
     task_handles: Arc<RwLock<Vec<TaskHandle>>>,
     worker_registry: Arc<RwLock<WorkerRegistry>>,
     task_states: Arc<RwLock<HashMap<String, TaskState>>>,
+    tool_registry: Arc<RwLock<ToolRegistry>>,
 }
 
 impl<B: MessageBus> fmt::Debug for ThalamusRuntime<B> {
@@ -51,6 +52,8 @@ impl<B: MessageBus> fmt::Debug for ThalamusRuntime<B> {
 impl<B: MessageBus> ThalamusRuntime<B> {
     /// 新しいThalamusRuntimeインスタンスを作成する
     pub fn new(bus: B) -> Self {
+        let mut registry = ToolRegistry::new();
+        registry.register("echo".to_string(), Box::new(EchoTool::default()));
         Self {
             bus,
             state: Arc::new(RwLock::new(RuntimeState::Initialized)),
@@ -58,6 +61,7 @@ impl<B: MessageBus> ThalamusRuntime<B> {
             task_handles: Arc::new(RwLock::new(Vec::new())),
             worker_registry: Arc::new(RwLock::new(WorkerRegistry::default())),
             task_states: Arc::new(RwLock::new(HashMap::new())),
+            tool_registry: Arc::new(RwLock::new(registry)),
         }
     }
 
@@ -118,6 +122,12 @@ impl<B: MessageBus> ThalamusRuntime<B> {
 
     pub async fn task_state(&self, id: &str) -> Option<TaskState> {
         self.task_states.read().await.get(id).cloned()
+    }
+
+    /// ツールを登録する
+    pub async fn register_tool(&self, capability: String, tool: Box<dyn crate::tool::Tool>) {
+        let mut registry = self.tool_registry.write().await;
+        registry.register(capability, tool);
     }
 }
 
@@ -323,7 +333,13 @@ impl<B: MessageBus> ThalamusRuntime<B> {
                     request.request_id = Some(event.id.clone());
                 }
                 self.update_task_waiting_for_tool(&request).await;
-                let result = EchoTool.invoke(request).await?;
+                let tool_registry = self.tool_registry.read().await;
+                let tool = tool_registry
+                    .get(&request.capability)
+                    .ok_or_else(|| {
+                        RuntimeError::BusError(format!("tool not found: {}", request.capability))
+                    })?;
+                let result = tool.invoke(request).await?;
                 let payload = serde_json::to_value(&result)
                     .map_err(|e| RuntimeError::BusError(format!("serialize failed: {}", e)))?;
                 let request_event_id = event.id.clone();

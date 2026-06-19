@@ -10,4 +10,4 @@ pub use llm::MockLlmProvider;
 pub use registry::{WorkerInfo, WorkerRecord, WorkerRegistry, WorkerState};
 pub use runtime::{EventHandler, ThalamusRuntime};
 pub use state::{RuntimeState, TaskHandle, TaskState, TaskStatus};
-pub use tool::EchoTool;
+pub use tool::{EchoTool, Tool, ToolRegistry};

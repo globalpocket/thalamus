@@ -1,16 +1,31 @@
+use async_trait::async_trait;
 use thalamus_protocol::payload::{RuntimeLLMRequestPayload, RuntimeLLMResponsePayload};
 
 use crate::RuntimeError;
 
-/// MockLlmProvider: 入力プロンプトから決定的なモック応答を返すLLMプロバイダ
+/// LlmProvider: pluggable LLM provider trait
 ///
-/// response の request_id は request の request_id をそのまま保持する。
-/// response の correlation_id は request の correlation_id をそのまま保持する。
+/// Runtime holds `Arc<dyn LlmProvider>` and delegates completion to it.
+/// Default is `MockLlmProvider`. Custom providers can be injected via
+/// `ThalamusRuntime::set_llm_provider()`.
+#[async_trait]
+pub trait LlmProvider: Send + Sync {
+    async fn complete(
+        &self,
+        request: RuntimeLLMRequestPayload,
+    ) -> Result<RuntimeLLMResponsePayload, RuntimeError>;
+}
+
+/// MockLlmProvider: returns a deterministic mock response
+///
+/// response.request_id preserves request.request_id.
+/// response.correlation_id preserves request.correlation_id.
 #[derive(Debug, Default, Clone)]
 pub struct MockLlmProvider;
 
-impl MockLlmProvider {
-    pub async fn complete(
+#[async_trait]
+impl LlmProvider for MockLlmProvider {
+    async fn complete(
         &self,
         request: RuntimeLLMRequestPayload,
     ) -> Result<RuntimeLLMResponsePayload, RuntimeError> {
@@ -36,6 +51,33 @@ impl MockLlmProvider {
             }),
             usage: serde_json::Value::Null,
             error: serde_json::Value::Null,
+            correlation_id: request.correlation_id,
+        })
+    }
+}
+
+/// ErrorProvider: always returns an error for testing error paths
+#[derive(Debug, Default, Clone)]
+pub struct ErrorLlmProvider;
+
+#[async_trait]
+impl LlmProvider for ErrorLlmProvider {
+    async fn complete(
+        &self,
+        request: RuntimeLLMRequestPayload,
+    ) -> Result<RuntimeLLMResponsePayload, RuntimeError> {
+        Ok(RuntimeLLMResponsePayload {
+            task_id: request.task_id.clone(),
+            model: request.model.or_else(|| Some("error-mock".to_string())),
+            request_id: request.request_id.clone(),
+            status: "error".to_string(),
+            text: None,
+            message: serde_json::json!({}),
+            usage: serde_json::Value::Null,
+            error: serde_json::json!({
+                "kind": "provider_error",
+                "message": "simulated provider failure"
+            }),
             correlation_id: request.correlation_id,
         })
     }
