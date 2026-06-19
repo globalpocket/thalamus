@@ -1,10 +1,9 @@
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::payload::{
     RuntimeAgentErrorPayload, RuntimeAgentExitPayload, RuntimeAgentReadyPayload,
-    RuntimeLLMRequestPayload, RuntimeTaskAssignPayload, RuntimeTaskResultPayload,
-    RuntimeToolRequestPayload,
+    RuntimeLLMRequestPayload, RuntimeLLMResponsePayload, RuntimeTaskAssignPayload,
+    RuntimeTaskResultPayload, RuntimeToolRequestPayload, RuntimeToolResultPayload,
 };
 
 /// Validation error type
@@ -49,7 +48,7 @@ const CANONICAL_SUBJECTS: &[&str] = &[
 pub fn validate_and_normalize_payload(
     subject: &str,
     event_id: &str,
-    mut payload: Value,
+    payload: Value,
 ) -> Result<Value, ValidationError> {
     if !is_canonical_subject(subject) {
         return Ok(payload);

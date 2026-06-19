@@ -45,9 +45,16 @@ impl Tool for EchoTool {
 /// ToolRegistry: registry of tools by capability name
 ///
 /// Allows runtime to look up tools by capability string.
-#[derive(Debug, Default)]
 pub struct ToolRegistry {
     tools: HashMap<String, Box<dyn Tool>>,
+}
+
+impl Default for ToolRegistry {
+    fn default() -> Self {
+        Self {
+            tools: HashMap::new(),
+        }
+    }
 }
 
 impl ToolRegistry {

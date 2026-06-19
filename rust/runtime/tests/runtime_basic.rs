@@ -16,6 +16,8 @@ use thalamus_protocol::{
     },
     EventEnvelope,
 };
+use thalamus_runtime::llm::LlmProvider;
+use thalamus_runtime::Tool;
 use thalamus_runtime::{
     EchoTool, MockLlmProvider, RuntimeError, RuntimeState, TaskState, ThalamusRuntime,
     WorkerRegistry,
@@ -398,24 +400,53 @@ async fn behavior_runtime_start_registers_default_mvp_subjects() {
         .await
         .expect("runtime should start with default MVP handlers");
 
-    for subject in [
-        RUNTIME_AGENT_SPAWN,
-        RUNTIME_TASK_ASSIGN,
-        RUNTIME_LLM_REQUEST,
-        RUNTIME_TOOL_REQUEST,
-    ] {
-        let envelope = runtime
-            .publish(
-                subject.to_string(),
-                "runtime-basic-test".to_string(),
-                serde_json::json!({ "behavior": "default-mvp-subject" }),
-            )
-            .await
-            .expect("default MVP subject should be registered on runtime start");
+    // runtime.agent.spawn has no strict payload validation; accept any JSON
+    let envelope = runtime
+        .publish(
+            RUNTIME_AGENT_SPAWN.to_string(),
+            "runtime-basic-test".to_string(),
+            serde_json::json!({ "behavior": "default-mvp-subject" }),
+        )
+        .await
+        .expect("runtime.agent.spawn should accept any JSON payload");
+    assert_eq!(envelope.subject, RUNTIME_AGENT_SPAWN);
+    assert_eq!(envelope.r#type, RUNTIME_AGENT_SPAWN);
 
-        assert_eq!(envelope.subject, subject);
-        assert_eq!(envelope.r#type, subject);
-    }
+    // runtime.task.assign requires task_id field
+    let envelope = runtime
+        .publish(
+            RUNTIME_TASK_ASSIGN.to_string(),
+            "runtime-basic-test".to_string(),
+            serde_json::json!({ "task_id": "test-task-001" }),
+        )
+        .await
+        .expect("runtime.task.assign should accept valid payload");
+    assert_eq!(envelope.subject, RUNTIME_TASK_ASSIGN);
+    assert_eq!(envelope.r#type, RUNTIME_TASK_ASSIGN);
+
+    // runtime.llm.request requires task_id field
+    let envelope = runtime
+        .publish(
+            RUNTIME_LLM_REQUEST.to_string(),
+            "runtime-basic-test".to_string(),
+            serde_json::json!({ "task_id": "test-task-002" }),
+        )
+        .await
+        .expect("runtime.llm.request should accept valid payload");
+    assert_eq!(envelope.subject, RUNTIME_LLM_REQUEST);
+    assert_eq!(envelope.r#type, RUNTIME_LLM_REQUEST);
+
+    // runtime.tool.request requires capability field
+    let envelope = runtime
+        .publish(
+            RUNTIME_TOOL_REQUEST.to_string(),
+            "runtime-basic-test".to_string(),
+            serde_json::json!({ "capability": "echo", "task_id": "test-task-003", "input": {} }),
+        )
+        .await
+        .expect("runtime.tool.request should accept valid payload");
+    assert_eq!(envelope.subject, RUNTIME_TOOL_REQUEST);
+    assert_eq!(envelope.r#type, RUNTIME_TOOL_REQUEST);
 }
 
 #[tokio::test]

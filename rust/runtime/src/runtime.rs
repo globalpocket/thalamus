@@ -18,7 +18,7 @@ use tokio::sync::RwLock;
 use uuid::Uuid;
 
 use crate::error::RuntimeError;
-use crate::llm::MockLlmProvider;
+use crate::llm::{LlmProvider, MockLlmProvider};
 use crate::registry::WorkerRegistry;
 use crate::state::{RuntimeState, TaskHandle, TaskState, TaskStatus};
 use crate::tool::{EchoTool, ToolRegistry};
@@ -267,9 +267,15 @@ impl<B: MessageBus> ThalamusRuntime<B> {
         task.set_task_status(TaskStatus::WaitingForTool).await;
     }
 
-    fn envelope(subject: String, source: String, payload: serde_json::Value) -> EventEnvelope {
+    /// Create an envelope with a pre-generated event_id for validation
+    fn envelope_with_id(
+        subject: String,
+        source: String,
+        event_id: String,
+        payload: serde_json::Value,
+    ) -> EventEnvelope {
         EventEnvelope {
-            id: Uuid::new_v4().to_string(),
+            id: event_id,
             subject: subject.clone(),
             r#type: subject.clone(),
             source,
@@ -282,6 +288,11 @@ impl<B: MessageBus> ThalamusRuntime<B> {
             causation_id: None,
             metadata: serde_json::json!({}),
         }
+    }
+
+    fn envelope(subject: String, source: String, payload: serde_json::Value) -> EventEnvelope {
+        let event_id = Uuid::new_v4().to_string();
+        Self::envelope_with_id(subject, source, event_id, payload)
     }
 
     async fn publish_default_runtime_result(
@@ -306,7 +317,7 @@ impl<B: MessageBus> ThalamusRuntime<B> {
                     request.request_id = Some(event.id.clone());
                 }
                 self.update_task_waiting_for_llm(&request).await;
-                let response = MockLlmProvider.complete(request).await?;
+                let response: thalamus_protocol::payload::RuntimeLLMResponsePayload = MockLlmProvider.complete(request).await?;
                 let payload = serde_json::to_value(&response)
                     .map_err(|e| RuntimeError::BusError(format!("serialize failed: {}", e)))?;
                 let request_event_id = event.id.clone();
@@ -439,7 +450,18 @@ impl<B: MessageBus> ThalamusRuntime<B> {
         source: String,
         payload: serde_json::Value,
     ) -> Result<EventEnvelope, RuntimeError> {
-        let envelope = Self::envelope(subject.clone(), source, payload);
+        // Generate event_id for validation
+        let event_id = uuid::Uuid::new_v4().to_string();
+
+        // Validate and normalize the payload
+        let normalized = thalamus_protocol::validation::validate_and_normalize_payload(
+            &subject,
+            &event_id,
+            payload,
+        )
+        .map_err(|e| RuntimeError::InvalidPayload(format!("{}: {}", e.subject, e.reason)))?;
+
+        let envelope = Self::envelope_with_id(subject.clone(), source, event_id, normalized);
 
         self.bus
             .publish(envelope.clone())
