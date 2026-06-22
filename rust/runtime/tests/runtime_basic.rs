@@ -29,16 +29,20 @@ fn runtime_basic_bus(runtime: &ThalamusRuntime<BasicBus>) -> &BasicBus {
     unsafe { &*(runtime as *const ThalamusRuntime<BasicBus> as *const BasicBus) }
 }
 
+fn new_runtime(bus: BasicBus) -> ThalamusRuntime<BasicBus> {
+    ThalamusRuntime::new(bus, Arc::new(MockLlmProvider))
+}
+
 #[tokio::test]
 async fn contract_new_runtime_starts_in_initialized_state() {
-    let runtime = ThalamusRuntime::new(BasicBus::new());
+    let runtime = new_runtime(BasicBus::new());
 
     assert_eq!(runtime.state().await, RuntimeState::Initialized);
 }
 
 #[tokio::test]
 async fn behavior_start_stop_transitions_runtime_state() {
-    let mut runtime = ThalamusRuntime::new(BasicBus::new());
+    let mut runtime = new_runtime(BasicBus::new());
 
     runtime.start().await.expect("runtime should start");
     assert_eq!(runtime.state().await, RuntimeState::Running);
@@ -52,7 +56,7 @@ async fn behavior_publish_and_handle_event_dispatch_registered_handler() {
     let subject = "unit.runtime.event".to_string();
     let counter = Arc::new(AtomicUsize::new(0));
     let handler_counter = Arc::clone(&counter);
-    let mut runtime = ThalamusRuntime::new(BasicBus::new());
+    let mut runtime = new_runtime(BasicBus::new());
     let handler: thalamus_runtime::EventHandler = Arc::new(move |_subject, _event| {
         let counter = Arc::clone(&handler_counter);
         Box::pin(async move {
@@ -90,7 +94,7 @@ async fn behavior_publish_and_handle_event_dispatch_registered_handler() {
 #[tokio::test]
 async fn contract_register_and_unregister_handler_updates_handler_count() {
     let subject = "unit.runtime.handler-count".to_string();
-    let runtime = ThalamusRuntime::new(BasicBus::new());
+    let runtime = new_runtime(BasicBus::new());
     let handler: thalamus_runtime::EventHandler = Arc::new(|_subject, _event| Box::pin(async {}));
 
     assert_eq!(runtime.handler_count().await, 0);
@@ -104,7 +108,7 @@ async fn contract_register_and_unregister_handler_updates_handler_count() {
 
 #[tokio::test]
 async fn contract_spawn_returns_handle_and_tracks_active_task_count() {
-    let runtime = ThalamusRuntime::new(BasicBus::new());
+    let runtime = new_runtime(BasicBus::new());
     let (finish_tx, finish_rx) = tokio::sync::oneshot::channel::<()>();
 
     assert_eq!(runtime.active_task_count().await, 0);
@@ -128,7 +132,7 @@ async fn contract_spawn_returns_handle_and_tracks_active_task_count() {
 
 #[tokio::test]
 async fn behavior_handle_event_without_registered_handler_returns_schedule_error() {
-    let runtime = ThalamusRuntime::new(BasicBus::new());
+    let runtime = new_runtime(BasicBus::new());
     let subject = "unit.runtime.missing".to_string();
     let envelope = EventEnvelope {
         id: "missing-handler-event".to_string(),
@@ -157,7 +161,7 @@ async fn behavior_handle_event_without_registered_handler_returns_schedule_error
 
 #[tokio::test]
 async fn contract_debug_formatters_expose_runtime_and_task_handle_shape() {
-    let runtime = ThalamusRuntime::new(BasicBus::default());
+    let runtime = new_runtime(BasicBus::default());
     let handle = runtime.spawn(async {}).await;
 
     let runtime_debug = format!("{:?}", runtime);
@@ -171,7 +175,7 @@ async fn contract_debug_formatters_expose_runtime_and_task_handle_shape() {
 
 #[tokio::test]
 async fn behavior_lifecycle_errors_preserve_state_transition_contract() {
-    let mut runtime = ThalamusRuntime::new(BasicBus::default());
+    let mut runtime = new_runtime(BasicBus::default());
 
     let not_running_error = runtime
         .stop()
@@ -204,7 +208,7 @@ async fn behavior_lifecycle_errors_preserve_state_transition_contract() {
 
 #[tokio::test]
 async fn runtime_publish_without_handler_is_ok() {
-    let runtime = ThalamusRuntime::new(BasicBus::default());
+    let runtime = new_runtime(BasicBus::default());
     let subject = "unit.runtime.unregistered-publish".to_string();
 
     let envelope = runtime
@@ -251,7 +255,7 @@ async fn contract_task_state_and_worker_registry_support_runtime_lookup() {
 
 #[tokio::test]
 async fn runtime_agent_ready_exit_error_updates_registry() {
-    let mut runtime = ThalamusRuntime::new(BasicBus::default());
+    let mut runtime = new_runtime(BasicBus::default());
 
     runtime
         .start()
@@ -329,7 +333,7 @@ async fn runtime_agent_ready_exit_error_updates_registry() {
 
 #[tokio::test]
 async fn runtime_task_assign_result_updates_task_state() {
-    let mut runtime = ThalamusRuntime::new(BasicBus::default());
+    let mut runtime = new_runtime(BasicBus::default());
 
     runtime
         .start()
@@ -393,7 +397,7 @@ async fn runtime_task_assign_result_updates_task_state() {
 
 #[tokio::test]
 async fn behavior_runtime_start_registers_default_mvp_subjects() {
-    let mut runtime = ThalamusRuntime::new(BasicBus::default());
+    let mut runtime = new_runtime(BasicBus::default());
 
     runtime
         .start()
@@ -476,23 +480,22 @@ async fn behavior_mock_llm_provider_and_echo_tool_mediate_runtime_requests() {
         .await
         .expect("mock LLM should answer");
     let tool_result = echo_tool
-        .invoke(tool_request)
+        .invoke(tool_request.input.clone())
         .await
         .expect("echo tool should answer");
+    let tool_result: serde_json::Value =
+        serde_json::from_value(tool_result).expect("echo tool result should deserialize as JSON");
 
     assert_eq!(
         llm_response.message["content"],
         serde_json::json!("Mock response: summarize runtime MVP")
     );
-    assert_eq!(
-        tool_result.result,
-        Some(serde_json::json!({ "text": "runtime MVP" }))
-    );
+    assert_eq!(tool_result, serde_json::json!({ "text": "runtime MVP" }));
 }
 
 #[tokio::test]
 async fn behavior_runtime_default_handlers_publish_llm_response_and_tool_result() {
-    let mut runtime = ThalamusRuntime::new(BasicBus::default());
+    let mut runtime = new_runtime(BasicBus::default());
     let observed_subjects = Arc::new(RwLock::new(Vec::<String>::new()));
     let llm_observed_subjects = Arc::clone(&observed_subjects);
     let llm_response_handler: thalamus_runtime::EventHandler = Arc::new(move |subject, _event| {
@@ -574,7 +577,7 @@ async fn behavior_runtime_default_handlers_publish_llm_response_and_tool_result(
 
 #[tokio::test]
 async fn behavior_runtime_llm_result_payload_preserves_request_correlation_id() {
-    let mut runtime = ThalamusRuntime::new(BasicBus::default());
+    let mut runtime = new_runtime(BasicBus::default());
 
     runtime
         .start()
@@ -620,7 +623,7 @@ async fn behavior_runtime_llm_result_payload_preserves_request_correlation_id() 
 
 #[tokio::test]
 async fn behavior_runtime_tool_result_payload_preserves_request_correlation_id() {
-    let mut runtime = ThalamusRuntime::new(BasicBus::default());
+    let mut runtime = new_runtime(BasicBus::default());
 
     runtime
         .start()
@@ -666,7 +669,7 @@ async fn behavior_runtime_tool_result_payload_preserves_request_correlation_id()
 
 #[tokio::test]
 async fn behavior_runtime_llm_request_uses_last_message_content_without_prompt() {
-    let mut runtime = ThalamusRuntime::new(BasicBus::default());
+    let mut runtime = new_runtime(BasicBus::default());
     runtime
         .start()
         .await
@@ -702,7 +705,7 @@ async fn behavior_runtime_llm_request_uses_last_message_content_without_prompt()
 
 #[tokio::test]
 async fn behavior_runtime_agent_lifecycle_events_update_worker_registry_state() {
-    let mut runtime = ThalamusRuntime::new(BasicBus::default());
+    let mut runtime = new_runtime(BasicBus::default());
 
     runtime
         .start()
@@ -780,7 +783,7 @@ async fn behavior_runtime_agent_lifecycle_events_update_worker_registry_state() 
 
 #[tokio::test]
 async fn behavior_runtime_llm_response_correlation_and_causation_equal_request_event_id() {
-    let mut runtime = ThalamusRuntime::new(BasicBus::default());
+    let mut runtime = new_runtime(BasicBus::default());
 
     runtime
         .start()
@@ -821,7 +824,7 @@ async fn behavior_runtime_llm_response_correlation_and_causation_equal_request_e
 
 #[tokio::test]
 async fn behavior_runtime_tool_result_correlation_and_causation_equal_request_event_id() {
-    let mut runtime = ThalamusRuntime::new(BasicBus::default());
+    let mut runtime = new_runtime(BasicBus::default());
 
     runtime
         .start()
@@ -863,7 +866,7 @@ async fn behavior_runtime_tool_result_correlation_and_causation_equal_request_ev
 #[tokio::test]
 async fn behavior_runtime_agent_error_without_agent_id_does_not_modify_registry() {
     // agent_id: None の場合、worker registry を勝手に変更しないことを確認
-    let mut runtime = ThalamusRuntime::new(BasicBus::default());
+    let mut runtime = new_runtime(BasicBus::default());
 
     runtime.start().await.expect("runtime should start");
 

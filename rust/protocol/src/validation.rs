@@ -161,10 +161,14 @@ pub fn validate_and_normalize_payload(
         _ => payload,
     };
 
-    // For request subjects,补完 request_id if None
+    // For request subjects, 補完 request_id if None
     let normalized = match subject {
         "runtime.llm.request" | "runtime.tool.request" => {
-            if normalized.get("request_id").and_then(|v| v.as_str()).is_none() {
+            if normalized
+                .get("request_id")
+                .and_then(|v| v.as_str())
+                .is_none()
+            {
                 let mut n = normalized;
                 n["request_id"] = Value::String(event_id.to_string());
                 n

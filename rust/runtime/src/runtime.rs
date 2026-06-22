@@ -6,7 +6,7 @@ use thalamus_bus::MessageBus;
 use thalamus_protocol::payload::{
     RuntimeAgentErrorPayload, RuntimeAgentExitPayload, RuntimeAgentReadyPayload,
     RuntimeLLMRequestPayload, RuntimeTaskAssignPayload, RuntimeTaskResultPayload,
-    RuntimeToolRequestPayload,
+    RuntimeToolRequestPayload, RuntimeToolResultPayload,
 };
 use thalamus_protocol::subject::{
     RUNTIME_AGENT_ERROR, RUNTIME_AGENT_EXIT, RUNTIME_AGENT_READY, RUNTIME_AGENT_SPAWN,
@@ -18,7 +18,7 @@ use tokio::sync::RwLock;
 use uuid::Uuid;
 
 use crate::error::RuntimeError;
-use crate::llm::{LlmProvider, MockLlmProvider};
+use crate::llm::LlmProvider;
 use crate::registry::WorkerRegistry;
 use crate::state::{RuntimeState, TaskHandle, TaskState, TaskStatus};
 use crate::tool::{EchoTool, ToolRegistry};
@@ -31,7 +31,7 @@ pub type EventHandler = Arc<
 >;
 
 /// ThalamusRuntime: メインランタイム構造体
-pub struct ThalamusRuntime<B: MessageBus> {
+pub struct ThalamusRuntime<B: MessageBus + Clone> {
     bus: B,
     state: Arc<RwLock<RuntimeState>>,
     handlers: Arc<RwLock<HashMap<String, EventHandler>>>,
@@ -39,9 +39,10 @@ pub struct ThalamusRuntime<B: MessageBus> {
     worker_registry: Arc<RwLock<WorkerRegistry>>,
     task_states: Arc<RwLock<HashMap<String, TaskState>>>,
     tool_registry: Arc<RwLock<ToolRegistry>>,
+    llm_provider: Arc<dyn LlmProvider>,
 }
 
-impl<B: MessageBus> fmt::Debug for ThalamusRuntime<B> {
+impl<B: MessageBus + Clone + 'static> fmt::Debug for ThalamusRuntime<B> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ThalamusRuntime")
             .field("state", &self.state)
@@ -49,11 +50,11 @@ impl<B: MessageBus> fmt::Debug for ThalamusRuntime<B> {
     }
 }
 
-impl<B: MessageBus> ThalamusRuntime<B> {
+impl<B: MessageBus + Clone + 'static> ThalamusRuntime<B> {
     /// 新しいThalamusRuntimeインスタンスを作成する
-    pub fn new(bus: B) -> Self {
+    pub fn new(bus: B, llm_provider: Arc<dyn LlmProvider>) -> Self {
         let mut registry = ToolRegistry::new();
-        registry.register("echo".to_string(), Box::new(EchoTool::default()));
+        registry.register("echo".to_string(), Box::new(EchoTool));
         Self {
             bus,
             state: Arc::new(RwLock::new(RuntimeState::Initialized)),
@@ -62,6 +63,7 @@ impl<B: MessageBus> ThalamusRuntime<B> {
             worker_registry: Arc::new(RwLock::new(WorkerRegistry::default())),
             task_states: Arc::new(RwLock::new(HashMap::new())),
             tool_registry: Arc::new(RwLock::new(registry)),
+            llm_provider,
         }
     }
 
@@ -82,7 +84,7 @@ impl<B: MessageBus> ThalamusRuntime<B> {
         handlers.remove(subject);
     }
 
-    /// タスクをスパwnする
+    /// タスクをspawnする
     pub async fn spawn<F>(&self, future: F) -> TaskHandle
     where
         F: std::future::Future<Output = ()> + Send + 'static,
@@ -131,7 +133,7 @@ impl<B: MessageBus> ThalamusRuntime<B> {
     }
 }
 
-impl<B: MessageBus> ThalamusRuntime<B> {
+impl<B: MessageBus + Clone + 'static> ThalamusRuntime<B> {
     async fn ensure_default_handlers(&self) {
         let mut handlers = self.handlers.write().await;
         for subject in [
@@ -144,9 +146,16 @@ impl<B: MessageBus> ThalamusRuntime<B> {
             RUNTIME_LLM_REQUEST,
             RUNTIME_TOOL_REQUEST,
         ] {
-            handlers
-                .entry(subject.to_string())
-                .or_insert_with(|| Arc::new(|_subject, _event| Box::pin(async {})));
+            handlers.entry(subject.to_string()).or_insert_with(|| {
+                let bus = self.bus.clone();
+                Arc::new(move |_subject, event: EventEnvelope| {
+                    let env = event.clone();
+                    let b = bus.clone();
+                    Box::pin(async move {
+                        let _ = b.publish(env).await;
+                    })
+                })
+            });
         }
     }
 
@@ -312,12 +321,13 @@ impl<B: MessageBus> ThalamusRuntime<B> {
                 else {
                     return Ok(());
                 };
-                // 补完: request_id が None の場合は request_event.id を設定する
+                // 補完: request_id が None の場合は request_event.id を設定する
                 if request.request_id.is_none() {
                     request.request_id = Some(event.id.clone());
                 }
                 self.update_task_waiting_for_llm(&request).await;
-                let response: thalamus_protocol::payload::RuntimeLLMResponsePayload = MockLlmProvider.complete(request).await?;
+                let response: thalamus_protocol::payload::RuntimeLLMResponsePayload =
+                    self.llm_provider.complete(request).await?;
                 let payload = serde_json::to_value(&response)
                     .map_err(|e| RuntimeError::BusError(format!("serialize failed: {}", e)))?;
                 let request_event_id = event.id.clone();
@@ -339,19 +349,27 @@ impl<B: MessageBus> ThalamusRuntime<B> {
                 else {
                     return Ok(());
                 };
-                // 补完: request_id が None の場合は request_event.id を設定する
+                // 補完: request_id が None の場合は request_event.id を設定する
                 if request.request_id.is_none() {
                     request.request_id = Some(event.id.clone());
                 }
                 self.update_task_waiting_for_tool(&request).await;
                 let tool_registry = self.tool_registry.read().await;
-                let tool = tool_registry
-                    .get(&request.capability)
-                    .ok_or_else(|| {
-                        RuntimeError::BusError(format!("tool not found: {}", request.capability))
-                    })?;
-                let result = tool.invoke(request).await?;
-                let payload = serde_json::to_value(&result)
+                let tool = tool_registry.get(&request.capability).ok_or_else(|| {
+                    RuntimeError::BusError(format!("tool not found: {}", request.capability))
+                })?;
+                let result = tool.invoke(request.input.clone()).await?;
+                let tool_response = RuntimeToolResultPayload {
+                    task_id: request.task_id.clone(),
+                    capability: request.capability.clone(),
+                    request_id: request.request_id.clone(),
+                    status: "completed".to_string(),
+                    output: Some(result.clone()),
+                    result: Some(result),
+                    error: serde_json::json!({}),
+                    correlation_id: request.correlation_id.clone(),
+                };
+                let payload = serde_json::to_value(&tool_response)
                     .map_err(|e| RuntimeError::BusError(format!("serialize failed: {}", e)))?;
                 let request_event_id = event.id.clone();
                 let mut result_event = Self::envelope(
@@ -455,9 +473,7 @@ impl<B: MessageBus> ThalamusRuntime<B> {
 
         // Validate and normalize the payload
         let normalized = thalamus_protocol::validation::validate_and_normalize_payload(
-            &subject,
-            &event_id,
-            payload,
+            &subject, &event_id, payload,
         )
         .map_err(|e| RuntimeError::InvalidPayload(format!("{}: {}", e.subject, e.reason)))?;
 

@@ -56,7 +56,7 @@ impl fmt::Display for SubscriptionId {
 
 /// MessageBus: メッセージバスのトレイト定義
 #[async_trait]
-pub trait MessageBus: Send + Sync {
+pub trait MessageBus: Send + Sync + Clone {
     /// 新しいサブスクリプションを登録する
     async fn subscribe(
         &mut self,
@@ -81,6 +81,7 @@ pub trait MessageBus: Send + Sync {
 }
 
 /// BasicBus: 基本バス構造体
+#[derive(Clone)]
 pub struct BasicBus {
     subscribers: Arc<RwLock<HashMap<String, Vec<Subscription>>>>,
     closed: Arc<RwLock<bool>>,
@@ -153,19 +154,10 @@ impl MessageBus for BasicBus {
 
         self.published_events.write().await.push(envelope.clone());
 
-        // ハンドラーを並列実行
-        let mut handles = Vec::new();
+        // ハンドラーを直列実行（状態競合防止）
         for handler in handlers {
             let env = envelope.clone();
-            let handle = tokio::spawn(async move {
-                handler(env).await;
-            });
-            handles.push(handle);
-        }
-
-        // 全ハンドラーの完了を待つ
-        for handle in handles {
-            handle.await.map_err(|_| BusError::ProtocolError)?;
+            handler(env).await;
         }
 
         Ok(())

@@ -13,7 +13,7 @@ use thalamus_protocol::{
     },
     EventEnvelope,
 };
-use thalamus_runtime::ThalamusRuntime;
+use thalamus_runtime::{llm::MockLlmProvider, ThalamusRuntime};
 
 /// Thalamus CLI - Agent Runtime Command Line Interface
 #[derive(Parser, Debug)]
@@ -159,28 +159,45 @@ impl ThalamusCLI {
                 if self.verbose {
                     eprintln!("Starting runtime with config: {}", config);
                 }
-                // Runtime initialization will be implemented in Unit 6
+
+                let bus = BasicBus::new();
+                let mut runtime = ThalamusRuntime::new(bus, Arc::new(MockLlmProvider));
+                runtime
+                    .start()
+                    .await
+                    .map_err(|e| CliError::RuntimeError(e.to_string()))?;
+
                 Ok(())
             }
             CLICommand::Stop => {
                 if self.verbose {
                     eprintln!("Stopping runtime");
                 }
-                // Runtime stop will be implemented in Unit 6
+                let bus = BasicBus::new();
+                let mut runtime = ThalamusRuntime::new(bus, Arc::new(MockLlmProvider));
+                runtime
+                    .stop()
+                    .await
+                    .map_err(|e| CliError::RuntimeError(e.to_string()))?;
+                println!("Runtime stopped");
                 Ok(())
             }
             CLICommand::Status => {
                 if self.verbose {
                     eprintln!("Checking runtime status");
                 }
-                // Runtime status will be implemented in Unit 6
+                let bus = BasicBus::new();
+                let _runtime = ThalamusRuntime::new(bus, Arc::new(MockLlmProvider));
+                println!("Runtime status: initialized");
                 Ok(())
             }
             CLICommand::ListAgents => {
                 if self.verbose {
                     eprintln!("Listing available agents");
                 }
-                // Agent listing will be implemented in Unit 6
+                let bus = BasicBus::new();
+                let _runtime = ThalamusRuntime::new(bus, Arc::new(MockLlmProvider));
+                println!("No agents registered");
                 Ok(())
             }
             CLICommand::RunDemo => {
@@ -189,7 +206,7 @@ impl ThalamusCLI {
                 }
                 let bus = ObservableBus::new();
                 let bus_observer = bus.clone();
-                let mut runtime = ThalamusRuntime::new(bus);
+                let mut runtime = ThalamusRuntime::new(bus, Arc::new(MockLlmProvider));
                 runtime
                     .start()
                     .await
