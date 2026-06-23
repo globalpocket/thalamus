@@ -45,7 +45,7 @@ impl fmt::Debug for Subscription {
 }
 
 /// SubscriptionId: サブスクリプションID
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SubscriptionId(pub String);
 
 impl fmt::Display for SubscriptionId {
@@ -55,11 +55,14 @@ impl fmt::Display for SubscriptionId {
 }
 
 /// MessageBus: メッセージバスのトレイト定義
+///
+/// All methods take `&self` to allow concurrent access from multiple tasks.
+/// Implementations must be `Clone + Send + Sync + 'static`.
 #[async_trait]
-pub trait MessageBus: Send + Sync + Clone {
+pub trait MessageBus: Send + Sync + Clone + 'static {
     /// 新しいサブスクリプションを登録する
     async fn subscribe(
-        &mut self,
+        &self,
         subject: String,
         handler: Handler,
     ) -> Result<SubscriptionId, BusError>;
@@ -68,10 +71,10 @@ pub trait MessageBus: Send + Sync + Clone {
     async fn publish(&self, envelope: EventEnvelope) -> Result<(), BusError>;
 
     /// サブスクリプションを解除する
-    async fn unsubscribe(&mut self, id: SubscriptionId) -> Result<(), BusError>;
+    async fn unsubscribe(&self, id: SubscriptionId) -> Result<(), BusError>;
 
     /// バスを閉じる（すべてのハンドラーを停止）
-    async fn close(&mut self);
+    async fn close(&self);
 
     /// バスが閉じられているか
     async fn is_closed(&self) -> bool;
@@ -81,6 +84,9 @@ pub trait MessageBus: Send + Sync + Clone {
 }
 
 /// BasicBus: 基本バス構造体
+///
+/// Uses internal mutability with `RwLock` for all state.
+/// Implements `Clone` by sharing state via `Arc`.
 #[derive(Clone)]
 pub struct BasicBus {
     subscribers: Arc<RwLock<HashMap<String, Vec<Subscription>>>>,
@@ -122,7 +128,7 @@ impl Default for BasicBus {
 #[async_trait]
 impl MessageBus for BasicBus {
     async fn subscribe(
-        &mut self,
+        &self,
         subject: String,
         handler: Handler,
     ) -> Result<SubscriptionId, BusError> {
@@ -150,11 +156,14 @@ impl MessageBus for BasicBus {
             return Err(BusError::Closed);
         }
 
+        // Clone handlers first, then release lock
         let handlers = self.get_handlers(&envelope.subject).await;
 
+        // Record event for observer API
         self.published_events.write().await.push(envelope.clone());
 
-        // ハンドラーを直列実行（状態競合防止）
+        // Release lock before awaiting handlers to avoid deadlock
+        // when a handler publishes to the same bus
         for handler in handlers {
             let env = envelope.clone();
             handler(env).await;
@@ -163,7 +172,7 @@ impl MessageBus for BasicBus {
         Ok(())
     }
 
-    async fn unsubscribe(&mut self, id: SubscriptionId) -> Result<(), BusError> {
+    async fn unsubscribe(&self, id: SubscriptionId) -> Result<(), BusError> {
         let mut subscribers = self.subscribers.write().await;
 
         for (_subject, subs) in subscribers.iter_mut() {
@@ -177,7 +186,7 @@ impl MessageBus for BasicBus {
         Err(BusError::NotFound(id.0))
     }
 
-    async fn close(&mut self) {
+    async fn close(&self) {
         let mut closed = self.closed.write().await;
         *closed = true;
         self.subscribers.write().await.clear();
@@ -206,7 +215,7 @@ mod tests {
 
     #[test]
     async fn test_subscribe_and_handler_count() {
-        let mut bus = BasicBus::new();
+        let bus = BasicBus::new();
         let handler: Handler = Arc::new(|_| Box::pin(async {}));
 
         let id = bus
@@ -220,7 +229,7 @@ mod tests {
 
     #[test]
     async fn test_unsubscribe() {
-        let mut bus = BasicBus::new();
+        let bus = BasicBus::new();
         let handler: Handler = Arc::new(|_| Box::pin(async {}));
 
         let id = bus
@@ -235,14 +244,14 @@ mod tests {
 
     #[test]
     async fn test_unsubscribe_not_found() {
-        let mut bus = BasicBus::new();
+        let bus = BasicBus::new();
         let fake_id = SubscriptionId("non-existent".to_string());
         assert!(bus.unsubscribe(fake_id).await.is_err());
     }
 
     #[test]
     async fn test_close() {
-        let mut bus = BasicBus::new();
+        let bus = BasicBus::new();
         bus.close().await;
         assert!(bus.is_closed().await);
         assert_eq!(bus.handler_count("any").await, 0);
@@ -268,5 +277,44 @@ mod tests {
 
         assert!(bus.publish(envelope).await.is_ok());
         assert_eq!(bus.published_events().await.len(), 1);
+    }
+
+    #[test]
+    async fn test_clone_shares_state() {
+        let bus1 = BasicBus::new();
+        let bus2 = bus1.clone();
+
+        let handler: Handler = Arc::new(|_| Box::pin(async {}));
+        bus1
+            .subscribe("test.subject".to_string(), handler)
+            .await
+            .unwrap();
+
+        // bus2 should see the same subscriptions
+        assert_eq!(bus2.handler_count("test.subject").await, 1);
+    }
+
+    #[test]
+    async fn test_publish_records_event() {
+        let bus = BasicBus::new();
+        let envelope = EventEnvelope {
+            id: "test-id".to_string(),
+            r#type: "test.event".to_string(),
+            subject: "test.subject".to_string(),
+            source: "test".to_string(),
+            timestamp: Uuid::new_v4().to_string(),
+            schema: "1.0".to_string(),
+            scope: None,
+            refs: None,
+            payload: serde_json::json!({}),
+            correlation_id: None,
+            causation_id: None,
+            metadata: serde_json::json!({}),
+        };
+
+        bus.publish(envelope.clone()).await.unwrap();
+        let events = bus.published_events().await;
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].id, "test-id");
     }
 }

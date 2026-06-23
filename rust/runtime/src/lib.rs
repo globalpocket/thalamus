@@ -6,8 +6,8 @@ pub mod state;
 pub mod tool;
 
 pub use error::RuntimeError;
-pub use llm::MockLlmProvider;
+pub use llm::{ErrorLlmProvider, LlmProvider, MockLlmProvider};
 pub use registry::{WorkerInfo, WorkerRecord, WorkerRegistry, WorkerState};
-pub use runtime::{EventHandler, ThalamusRuntime};
+pub use runtime::{EventHandler, RuntimeCore, ThalamusRuntime};
 pub use state::{RuntimeState, TaskHandle, TaskState, TaskStatus};
 pub use tool::{EchoTool, Tool, ToolRegistry};

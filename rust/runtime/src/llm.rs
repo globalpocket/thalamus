@@ -56,7 +56,7 @@ impl LlmProvider for MockLlmProvider {
     }
 }
 
-/// ErrorProvider: always returns an error for testing error paths
+/// ErrorLlmProvider: always returns an error for testing error paths
 #[derive(Debug, Default, Clone)]
 pub struct ErrorLlmProvider;
 
@@ -64,21 +64,10 @@ pub struct ErrorLlmProvider;
 impl LlmProvider for ErrorLlmProvider {
     async fn complete(
         &self,
-        request: RuntimeLLMRequestPayload,
+        _request: RuntimeLLMRequestPayload,
     ) -> Result<RuntimeLLMResponsePayload, RuntimeError> {
-        Ok(RuntimeLLMResponsePayload {
-            task_id: request.task_id.clone(),
-            model: request.model.or_else(|| Some("error-mock".to_string())),
-            request_id: request.request_id.clone(),
-            status: "error".to_string(),
-            text: None,
-            message: serde_json::json!({}),
-            usage: serde_json::Value::Null,
-            error: serde_json::json!({
-                "kind": "provider_error",
-                "message": "simulated provider failure"
-            }),
-            correlation_id: request.correlation_id,
-        })
+        Err(RuntimeError::ProviderError(
+            "simulated provider failure".to_string(),
+        ))
     }
 }

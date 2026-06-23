@@ -1,6 +1,6 @@
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
-    Arc, RwLock,
+    Arc,
 };
 use thalamus_bus::BasicBus;
 use thalamus_protocol::{
@@ -22,12 +22,6 @@ use thalamus_runtime::{
     EchoTool, MockLlmProvider, RuntimeError, RuntimeState, TaskState, ThalamusRuntime,
     WorkerRegistry,
 };
-
-fn runtime_basic_bus(runtime: &ThalamusRuntime<BasicBus>) -> &BasicBus {
-    // SAFETY: このテストはThalamusRuntimeが所有するBasicBusの公開済みイベントだけを観測する。
-    // ThalamusRuntimeの先頭フィールドはBasicBusであり、可変参照は作らず借用中にruntimeを移動しない。
-    unsafe { &*(runtime as *const ThalamusRuntime<BasicBus> as *const BasicBus) }
-}
 
 fn new_runtime(bus: BasicBus) -> ThalamusRuntime<BasicBus> {
     ThalamusRuntime::new(bus, Arc::new(MockLlmProvider))
@@ -56,7 +50,9 @@ async fn behavior_publish_and_handle_event_dispatch_registered_handler() {
     let subject = "unit.runtime.event".to_string();
     let counter = Arc::new(AtomicUsize::new(0));
     let handler_counter = Arc::clone(&counter);
-    let mut runtime = new_runtime(BasicBus::new());
+    let bus = BasicBus::new();
+    let observer = bus.clone();
+    let mut runtime = new_runtime(bus);
     let handler: thalamus_runtime::EventHandler = Arc::new(move |_subject, _event| {
         let counter = Arc::clone(&handler_counter);
         Box::pin(async move {
@@ -64,7 +60,7 @@ async fn behavior_publish_and_handle_event_dispatch_registered_handler() {
         })
     });
 
-    runtime.register_handler(subject.clone(), handler).await;
+    runtime.register_handler(subject.clone(), handler).await.unwrap();
     runtime
         .start()
         .await
@@ -81,29 +77,30 @@ async fn behavior_publish_and_handle_event_dispatch_registered_handler() {
 
     assert_eq!(envelope.subject, subject);
     assert_eq!(envelope.source, "runtime-basic-test");
-    assert_eq!(envelope.schema, "thalamus.unit.runtime.event");
+    assert_eq!(envelope.schema, format!("thalamus.{}", subject));
+    // User handler receives the event from bus
     assert_eq!(counter.load(Ordering::SeqCst), 1);
 
-    runtime
-        .handle_event(subject, envelope)
-        .await
-        .expect("handle_event should dispatch registered handler");
-    assert_eq!(counter.load(Ordering::SeqCst), 2);
+    // Verify event was recorded by bus observer
+    let events = observer.published_events().await;
+    assert!(!events.is_empty());
+    assert_eq!(events[0].subject, subject);
 }
 
 #[tokio::test]
 async fn contract_register_and_unregister_handler_updates_handler_count() {
     let subject = "unit.runtime.handler-count".to_string();
-    let runtime = new_runtime(BasicBus::new());
+    let bus = BasicBus::new();
+    let runtime = new_runtime(bus);
     let handler: thalamus_runtime::EventHandler = Arc::new(|_subject, _event| Box::pin(async {}));
 
-    assert_eq!(runtime.handler_count().await, 0);
+    assert_eq!(runtime.user_handler_count().await, 0);
 
-    runtime.register_handler(subject.clone(), handler).await;
-    assert_eq!(runtime.handler_count().await, 1);
+    let id = runtime.register_handler(subject.clone(), handler).await.unwrap();
+    assert_eq!(runtime.user_handler_count().await, 1);
 
-    runtime.unregister_handler(&subject).await;
-    assert_eq!(runtime.handler_count().await, 0);
+    runtime.unregister_handler(id).await.unwrap();
+    assert_eq!(runtime.user_handler_count().await, 0);
 }
 
 #[tokio::test]
@@ -192,7 +189,7 @@ async fn behavior_lifecycle_errors_preserve_state_transition_contract() {
         .await
         .expect_err("running runtime cannot be started again");
     assert!(
-        matches!(already_running_error, RuntimeError::LifecycleError(message) if message == "already running")
+        matches!(already_running_error, RuntimeError::LifecycleError(message) if message == "already running, cannot start again")
     );
 
     runtime.stop().await.expect("running runtime should stop");
@@ -208,7 +205,9 @@ async fn behavior_lifecycle_errors_preserve_state_transition_contract() {
 
 #[tokio::test]
 async fn runtime_publish_without_handler_is_ok() {
-    let runtime = new_runtime(BasicBus::default());
+    let bus = BasicBus::new();
+    let observer = bus.clone();
+    let runtime = new_runtime(bus);
     let subject = "unit.runtime.unregistered-publish".to_string();
 
     let envelope = runtime
@@ -223,7 +222,7 @@ async fn runtime_publish_without_handler_is_ok() {
     assert_eq!(envelope.subject, subject);
     assert_eq!(envelope.source, "runtime-basic-test");
     assert_eq!(
-        runtime_basic_bus(&runtime).published_events().await,
+        observer.published_events().await,
         vec![envelope]
     );
 }

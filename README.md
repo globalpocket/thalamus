@@ -378,32 +378,48 @@ The project explores:
 
 ---
 ## Status
-- **Rust Runtime MVP**: ✅ Completed
-  - Implemented core runtime semantics (Task assignment, Result handling, Tool/LLM request/response).
-  - Added `scope` and `refs` to `EventEnvelope`.
-  - Worker registry and state management implemented.
-  - Default handlers and publish semantics verified.
-  - CLI `RunDemo` functional.
-  - Tests: 46 pass (local verification), Clippy pass, Fmt pass.
 
 Prototype implementation phase.
 
+### Rust Runtime MVP
+
+- **Rust Runtime MVP**: ✅ Completed
+  - Event-driven internal handler architecture
+  - `Runtime.publish()` as pure event entrance
+  - LlmProvider injection with `set_llm_provider()`
+  - ToolRegistry with `tool.echo` canonical capability
+  - User handler / internal handler separation
+  - Exact-once provider/tool invocation semantics
+  - Provider/tool error handling via event publication
+
 Implemented today:
 
-* event validation and publication for `runtime.task.assign`, `runtime.task.result`, `runtime.agent.ready`, `runtime.agent.exit`
-* NATS-based event bus adapter
-* disposable worker spawn flow through supervisor
-* direct task addressing via `runtime.task.assign.<agent_id>`
-* minimal sandbox shell worker capability (`tool.shell`) with timeout, stdout/stderr, and exit-code reporting
-* minimal reference implemented runtime subjects for LLM and tool mediation (`runtime.llm.request` / `runtime.llm.response`, `runtime.tool.request` / `runtime.tool.result`)
-* Rust Runtime MVP is implemented in [`rust/`](rust/): protocol envelope and payload contracts, in-memory bus behavior, runtime lifecycle, worker/task state tracking, bus-mediated deterministic LLM/tool result handlers, CLI parsing, and deterministic local demo command coverage.
-* Rust protocol exposes [`EventEnvelope`](rust/protocol/src/message.rs:5) with canonical fields plus optional `scope` and `refs`, constructs envelopes through [`EventEnvelopeFields`](rust/protocol/src/message.rs:26), and defines MVP runtime payloads such as [`RuntimeLLMRequestPayload`](rust/protocol/src/payload.rs:75) and [`RuntimeToolRequestPayload`](rust/protocol/src/payload.rs:50) with payload-level `correlation_id` fields.
-* Rust bus exposes [`BasicBus`](rust/bus/src/lib.rs:84) with publish delivery, closed-bus errors, no-subscriber success, and an observation snapshot via [`published_events()`](rust/bus/src/lib.rs:101).
-* Rust runtime exposes [`TaskState`](rust/runtime/src/lib.rs:66), [`WorkerRegistry`](rust/runtime/src/lib.rs:113), [`MockLlmProvider`](rust/runtime/src/lib.rs:145), [`EchoTool`](rust/runtime/src/lib.rs:178), default MVP subject registration, LLM request input from `prompt` or the last `messages` content, payload-level `correlation_id` preservation, local agent/task state updates, and bus-mediated publication of [`runtime.llm.response`](rust/protocol/src/subject.rs:12) and [`runtime.tool.result`](rust/protocol/src/subject.rs:14).
-* [`ThalamusRuntime::publish()`](rust/runtime/src/lib.rs:530) first records accepted events through the bus, then applies default runtime behavior for agent ready/exit/error, task assign/result, LLM request, and tool request subjects; accepted events remain observable even when there are no external subscribers.
-* Rust CLI includes [`RunDemo`](rust/cli/src/lib.rs:37), which starts a local runtime, publishes LLM/tool request payloads through the [`BasicBus`](rust/bus/src/lib.rs:84) path, and prints `Runtime Event Flow`, `Mock response: summarize runtime MVP`, and the echo tool JSON outcome.
-* Rust workspace verification commands: `cd rust && cargo fmt && cargo clippy --all-targets -- -D warnings && cargo test`.
+* event validation and normalization for all canonical subjects via [`validate_and_normalize_payload()`](rust/protocol/src/validation.rs:48)
+* `runtime.agent.spawn` is observation-only in MVP
+* `runtime.agent.ready` / `runtime.agent.exit` / `runtime.agent.error` update [`WorkerRegistry`](rust/runtime/src/registry.rs:68)
+* `runtime.task.assign` / `runtime.task.result` update [`TaskState`](rust/runtime/src/state.rs:75)
+* `runtime.llm.request` calls injected provider exactly once, publishes [`runtime.llm.response`](rust/protocol/src/subject.rs:16)
+* `runtime.tool.request` invokes tool exactly once, publishes [`runtime.tool.result`](rust/protocol/src/subject.rs:14)
+* Provider errors produce `runtime.llm.response` with `status="error"`
+* Unknown tool errors produce `runtime.tool.result` with `status="error"`
+* Invalid canonical payloads are NOT recorded by the bus
+* Unknown extension subjects ARE published
+* `request_id` is auto-completed for `runtime.llm.request` and `runtime.tool.request`
+* [`BasicBus`](rust/bus/src/lib.rs:84) implements `Clone + Send + Sync + 'static` with `&self` methods
+* [`RuntimeCore`](rust/runtime/src/runtime.rs:35) holds shared state for internal handlers
+* [`ThalamusRuntime::publish()`](rust/runtime/src/runtime.rs:431) is the sole event entrance
+* CLI [`RunDemo`](rust/cli/src/lib.rs:203) observes event flow via `observer.published_events()`
 * Rust SDK FFI subscription rejects a NULL callback with `-1`; callers must pass a valid callback function pointer to `thalamus_subscribe()`. The callback payload pointer is NUL-terminated, non-null, and valid only for the duration of the callback invocation.
+
+Verification commands:
+
+```bash
+cd rust
+cargo fmt --all -- --check
+cargo check --workspace --all-features
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace --all-features
+```
 
 Not implemented yet (still design-level in docs):
 

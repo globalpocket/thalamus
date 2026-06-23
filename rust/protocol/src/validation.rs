@@ -56,8 +56,15 @@ pub fn validate_and_normalize_payload(
 
     let normalized = match subject {
         "runtime.agent.spawn" => {
-            // spawn has no strict payload struct in MVP; accept as-is
-            payload
+            let p: crate::payload::RuntimeAgentSpawnPayload =
+                serde_json::from_value(payload).map_err(|e| ValidationError {
+                    subject: subject.to_string(),
+                    reason: format!("RuntimeAgentSpawnPayload: {}", e),
+                })?;
+            serde_json::to_value(&p).map_err(|e| ValidationError {
+                subject: subject.to_string(),
+                reason: format!("serialize RuntimeAgentSpawnPayload: {}", e),
+            })?
         }
         "runtime.agent.ready" => {
             let p: RuntimeAgentReadyPayload =

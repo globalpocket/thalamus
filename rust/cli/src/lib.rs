@@ -1,15 +1,16 @@
-use std::{future::Future, pin::Pin, sync::Arc};
+use std::sync::Arc;
 
 use clap::Parser;
-use thalamus_bus::{BasicBus, BusError, Handler, MessageBus, SubscriptionId};
+use thalamus_bus::{BasicBus, Handler, MessageBus, SubscriptionId};
 use thalamus_protocol::subject::{
+    RUNTIME_AGENT_SPAWN, RUNTIME_AGENT_READY, RUNTIME_AGENT_EXIT, RUNTIME_AGENT_ERROR,
     RUNTIME_LLM_REQUEST, RUNTIME_LLM_RESPONSE, RUNTIME_TASK_ASSIGN, RUNTIME_TASK_RESULT,
     RUNTIME_TOOL_REQUEST, RUNTIME_TOOL_RESULT,
 };
 use thalamus_protocol::{
     payload::{
-        RuntimeLLMRequestPayload, RuntimeTaskAssignPayload, RuntimeTaskResultPayload,
-        RuntimeToolRequestPayload,
+        RuntimeAgentReadyPayload, RuntimeLLMRequestPayload, RuntimeTaskAssignPayload,
+        RuntimeTaskResultPayload, RuntimeToolRequestPayload,
     },
     EventEnvelope,
 };
@@ -59,91 +60,6 @@ pub enum CliError {
 
     #[error("IO error: {0}")]
     IoError(#[from] std::io::Error),
-}
-
-#[derive(Clone)]
-struct ObservableBus {
-    inner: Arc<tokio::sync::RwLock<BasicBus>>,
-}
-
-impl ObservableBus {
-    fn new() -> Self {
-        Self {
-            inner: Arc::new(tokio::sync::RwLock::new(BasicBus::new())),
-        }
-    }
-
-    async fn published_events(&self) -> Vec<EventEnvelope> {
-        self.inner.read().await.published_events().await
-    }
-}
-
-impl MessageBus for ObservableBus {
-    fn subscribe<'life0, 'async_trait>(
-        &'life0 mut self,
-        subject: String,
-        handler: Handler,
-    ) -> Pin<Box<dyn Future<Output = Result<SubscriptionId, BusError>> + Send + 'async_trait>>
-    where
-        'life0: 'async_trait,
-        Self: 'async_trait,
-    {
-        Box::pin(async move { self.inner.write().await.subscribe(subject, handler).await })
-    }
-
-    fn publish<'life0, 'async_trait>(
-        &'life0 self,
-        envelope: EventEnvelope,
-    ) -> Pin<Box<dyn Future<Output = Result<(), BusError>> + Send + 'async_trait>>
-    where
-        'life0: 'async_trait,
-        Self: 'async_trait,
-    {
-        Box::pin(async move { self.inner.read().await.publish(envelope).await })
-    }
-
-    fn unsubscribe<'life0, 'async_trait>(
-        &'life0 mut self,
-        id: SubscriptionId,
-    ) -> Pin<Box<dyn Future<Output = Result<(), BusError>> + Send + 'async_trait>>
-    where
-        'life0: 'async_trait,
-        Self: 'async_trait,
-    {
-        Box::pin(async move { self.inner.write().await.unsubscribe(id).await })
-    }
-
-    fn close<'life0, 'async_trait>(
-        &'life0 mut self,
-    ) -> Pin<Box<dyn Future<Output = ()> + Send + 'async_trait>>
-    where
-        'life0: 'async_trait,
-        Self: 'async_trait,
-    {
-        Box::pin(async move { self.inner.write().await.close().await })
-    }
-
-    fn is_closed<'life0, 'async_trait>(
-        &'life0 self,
-    ) -> Pin<Box<dyn Future<Output = bool> + Send + 'async_trait>>
-    where
-        'life0: 'async_trait,
-        Self: 'async_trait,
-    {
-        Box::pin(async move { self.inner.read().await.is_closed().await })
-    }
-
-    fn handler_count<'life0, 'life1, 'async_trait>(
-        &'life0 self,
-        subject: &'life1 str,
-    ) -> Pin<Box<dyn Future<Output = usize> + Send + 'async_trait>>
-    where
-        'life0: 'async_trait,
-        'life1: 'async_trait,
-        Self: 'async_trait,
-    {
-        Box::pin(async move { self.inner.read().await.handler_count(subject).await })
-    }
 }
 
 impl ThalamusCLI {
@@ -204,8 +120,9 @@ impl ThalamusCLI {
                 if self.verbose {
                     eprintln!("Running demo");
                 }
-                let bus = ObservableBus::new();
-                let bus_observer = bus.clone();
+
+                let bus = BasicBus::new();
+                let observer = bus.clone();
                 let mut runtime = ThalamusRuntime::new(bus, Arc::new(MockLlmProvider));
                 runtime
                     .start()
@@ -218,6 +135,7 @@ impl ThalamusCLI {
                 let llm_prompt = "summarize runtime MVP";
                 let tool_input = serde_json::json!({ "text": "runtime MVP" });
 
+                // Publish task.assign — internal handler creates TaskState
                 runtime
                     .publish(
                         RUNTIME_TASK_ASSIGN.to_string(),
@@ -228,7 +146,7 @@ impl ThalamusCLI {
                                 "prompt": llm_prompt,
                                 "tool_input": tool_input,
                             }),
-                            capabilities: vec!["llm".to_string(), "echo".to_string()],
+                            capabilities: vec!["llm".to_string(), "tool.echo".to_string()],
                             metadata: serde_json::json!({ "demo": true }),
                             agent_id: Some(agent_id.clone()),
                             parent_task_id: None,
@@ -238,6 +156,8 @@ impl ThalamusCLI {
                     )
                     .await
                     .map_err(|e| CliError::RuntimeError(e.to_string()))?;
+
+                // Publish llm.request — internal handler calls provider and publishes llm.response
                 runtime
                     .publish(
                         RUNTIME_LLM_REQUEST.to_string(),
@@ -255,6 +175,8 @@ impl ThalamusCLI {
                     )
                     .await
                     .map_err(|e| CliError::RuntimeError(e.to_string()))?;
+
+                // Publish tool.request — internal handler invokes tool and publishes tool.result
                 runtime
                     .publish(
                         RUNTIME_TOOL_REQUEST.to_string(),
@@ -262,7 +184,7 @@ impl ThalamusCLI {
                         serde_json::to_value(RuntimeToolRequestPayload {
                             task_id: task_id.clone(),
                             request_id: None,
-                            capability: "echo".to_string(),
+                            capability: "tool.echo".to_string(),
                             input: tool_input.clone(),
                             correlation_id: Some(correlation_id.clone()),
                             timeout_seconds: None,
@@ -271,6 +193,8 @@ impl ThalamusCLI {
                     )
                     .await
                     .map_err(|e| CliError::RuntimeError(e.to_string()))?;
+
+                // Publish task.result — internal handler updates TaskState
                 runtime
                     .publish(
                         RUNTIME_TASK_RESULT.to_string(),
@@ -288,7 +212,7 @@ impl ThalamusCLI {
                     .map_err(|e| CliError::RuntimeError(e.to_string()))?;
 
                 println!("Runtime Event Flow");
-                let published_events = bus_observer.published_events().await;
+                let published_events = observer.published_events().await;
                 for event in &published_events {
                     println!("{} {}", event.subject, event.source);
                 }
@@ -307,6 +231,7 @@ impl ThalamusCLI {
                         _ => {}
                     }
                 }
+
                 Ok(())
             }
         }

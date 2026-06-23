@@ -26,4 +26,10 @@ pub enum RuntimeError {
 
     #[error("schedule error: {0}")]
     ScheduleError(String),
+
+    #[error("provider error: {0}")]
+    ProviderError(String),
+
+    #[error("tool error: {0}")]
+    ToolError(String),
 }
