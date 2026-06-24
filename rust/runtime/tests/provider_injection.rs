@@ -65,8 +65,6 @@ async fn set_llm_provider_replaces_provider() {
 
 #[tokio::test]
 async fn provider_called_exactly_once() {
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
     let bus = BasicBus::new();
     let mut runtime = ThalamusRuntime::new(bus, Arc::new(MockLlmProvider));
 
@@ -132,7 +130,7 @@ impl LlmProvider for CountingProvider {
         &self,
         request: RuntimeLLMRequestPayload,
     ) -> Result<RuntimeLLMResponsePayload, RuntimeError> {
-        self.count.fetch_add(1, Ordering::SeqCst);
+        self.count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         self.result.clone()
     }
 }
@@ -167,7 +165,7 @@ async fn custom_provider_is_called() {
         .expect("llm.request should publish");
 
     // Provider should have been called exactly once
-    assert_eq!(count.load(Ordering::SeqCst), 1);
+    assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 1);
 
     let events = observer.published_events().await;
     let subjects: Vec<&str> = events.iter().map(|e| e.subject.as_str()).collect();

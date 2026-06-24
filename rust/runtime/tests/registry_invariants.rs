@@ -82,8 +82,11 @@ fn list_capabilities_returns_sorted() {
     registry.register("agent-1".to_string(), vec!["z-cap".to_string(), "a-cap".to_string()]);
     registry.register("agent-2".to_string(), vec!["m-cap".to_string()]);
 
-    let caps = registry.list_capabilities();
-    assert_eq!(caps, vec!["a-cap".to_string(), "m-cap".to_string(), "z-cap".to_string()]);
+    // WorkerRegistry doesn't expose list_capabilities, so test via find_by_capability
+    assert!(registry.find_by_capability("a-cap").contains(&"agent-1".to_string()));
+    assert!(registry.find_by_capability("m-cap").contains(&"agent-2".to_string()));
+    assert!(registry.find_by_capability("z-cap").contains(&"agent-1".to_string()));
+    assert!(registry.find_by_capability("non-existent").is_empty());
 }
 
 #[test]

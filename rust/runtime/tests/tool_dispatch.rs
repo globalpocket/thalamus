@@ -2,10 +2,10 @@ use std::sync::Arc;
 
 use thalamus_bus::BasicBus;
 use thalamus_protocol::{
-    payload::{RuntimeToolRequestPayload, RuntimeToolResultPayload},
+    payload::RuntimeToolRequestPayload,
     subject::RUNTIME_TOOL_REQUEST,
 };
-use thalamus_runtime::{Tool, ThalamusRuntime};
+use thalamus_runtime::{ThalamusRuntime, Tool};
 
 #[tokio::test]
 async fn tool_echo_returns_input() {
@@ -99,24 +99,34 @@ async fn register_tool_adds_capability() {
 
     #[async_trait::async_trait]
     impl Tool for DoubleTool {
-        fn name(&self) -> &str {
-            "double"
+        fn capability(&self) -> &str {
+            "math.double"
         }
 
         fn description(&self) -> &str {
             "Doubles the input"
         }
 
-        async fn invoke(&self, parameters: serde_json::Value) -> Result<serde_json::Value, thalamus_runtime::RuntimeError> {
-            if let Some(n) = parameters["value"].as_i64() {
-                Ok(serde_json::json!({"result": n * 2}))
+        async fn invoke(&self, request: thalamus_protocol::payload::RuntimeToolRequestPayload) -> Result<thalamus_protocol::payload::RuntimeToolResultPayload, thalamus_runtime::RuntimeError> {
+            let result_value = if let Some(n) = request.input["value"].as_i64() {
+                serde_json::json!({"result": n * 2})
             } else {
-                Ok(serde_json::json!({"error": "invalid input"}))
-            }
+                serde_json::json!({"error": "invalid input"})
+            };
+            Ok(thalamus_protocol::payload::RuntimeToolResultPayload {
+                task_id: request.task_id.clone(),
+                capability: request.capability.clone(),
+                request_id: request.request_id.clone(),
+                status: "completed".to_string(),
+                output: Some(result_value.clone()),
+                result: Some(result_value),
+                error: serde_json::json!({}),
+                correlation_id: request.correlation_id.clone(),
+            })
         }
     }
 
-    runtime.register_tool("math.double".to_string(), Box::new(DoubleTool)).await;
+    runtime.register_tool("math.double".to_string(), Arc::new(DoubleTool)).await;
 
     let caps = runtime.list_tool_capabilities().await;
     assert!(caps.contains(&"echo".to_string()));
@@ -129,7 +139,7 @@ async fn unregister_tool_removes_capability() {
     let bus = BasicBus::new();
     let mut runtime = ThalamusRuntime::new(bus, Arc::new(thalamus_runtime::MockLlmProvider));
 
-    runtime.register_tool("math.double".to_string(), Box::new(thalamus_runtime::EchoTool)).await;
+    runtime.register_tool("math.double".to_string(), Arc::new(thalamus_runtime::EchoTool)).await;
 
     let caps = runtime.list_tool_capabilities().await;
     assert!(caps.contains(&"math.double".to_string()));
@@ -145,7 +155,6 @@ async fn tool_called_exactly_once() {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     let call_count = Arc::new(AtomicUsize::new(0));
-    let count_clone = call_count.clone();
 
     struct CountingTool {
         count: Arc<AtomicUsize>,
@@ -153,17 +162,27 @@ async fn tool_called_exactly_once() {
 
     #[async_trait::async_trait]
     impl Tool for CountingTool {
-        fn name(&self) -> &str {
-            "counting"
+        fn capability(&self) -> &str {
+            "test.counting"
         }
 
         fn description(&self) -> &str {
             "Counts invocations"
         }
 
-        async fn invoke(&self, _parameters: serde_json::Value) -> Result<serde_json::Value, thalamus_runtime::RuntimeError> {
+        async fn invoke(&self, request: thalamus_protocol::payload::RuntimeToolRequestPayload) -> Result<thalamus_protocol::payload::RuntimeToolResultPayload, thalamus_runtime::RuntimeError> {
             self.count.fetch_add(1, Ordering::SeqCst);
-            Ok(serde_json::json!({"count": self.count.load(Ordering::SeqCst)}))
+            let count = self.count.load(Ordering::SeqCst);
+            Ok(thalamus_protocol::payload::RuntimeToolResultPayload {
+                task_id: request.task_id.clone(),
+                capability: request.capability.clone(),
+                request_id: request.request_id.clone(),
+                status: "completed".to_string(),
+                output: Some(serde_json::json!({"count": count})),
+                result: Some(serde_json::json!({"count": count})),
+                error: serde_json::json!({}),
+                correlation_id: request.correlation_id.clone(),
+            })
         }
     }
 
@@ -171,7 +190,7 @@ async fn tool_called_exactly_once() {
     let observer = bus.clone();
     let mut runtime = ThalamusRuntime::new(bus, Arc::new(thalamus_runtime::MockLlmProvider));
 
-    runtime.register_tool("test.counting".to_string(), Box::new(CountingTool { count: count_clone })).await;
+    runtime.register_tool("test.counting".to_string(), Arc::new(CountingTool { count: call_count.clone() })).await;
 
     runtime.start().await.expect("runtime should start");
 

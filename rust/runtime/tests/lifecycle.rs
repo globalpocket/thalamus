@@ -7,12 +7,12 @@ use thalamus_protocol::{
         RuntimeTaskResultPayload, RuntimeToolRequestPayload,
     },
     subject::{
-        RUNTIME_AGENT_READY, RUNTIME_LLM_REQUEST, RUNTIME_TASK_ASSIGN, RUNTIME_TASK_RESULT,
-        RUNTIME_TOOL_REQUEST,
+        RUNTIME_LLM_REQUEST, RUNTIME_TASK_ASSIGN, RUNTIME_TASK_RESULT,
+        RUNTIME_TOOL_REQUEST, RUNTIME_TOOL_RESULT,
     },
 };
 use thalamus_runtime::{
-    ErrorLlmProvider, MockLlmProvider, RuntimeError, RuntimeState, ThalamusRuntime,
+    ErrorLlmProvider, MockLlmProvider, RuntimeError, ThalamusRuntime,
 };
 
 #[tokio::test]

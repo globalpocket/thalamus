@@ -1,6 +1,6 @@
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
-    Arc,
+    Arc, RwLock,
 };
 use thalamus_bus::BasicBus;
 use thalamus_protocol::{
@@ -468,7 +468,7 @@ async fn behavior_mock_llm_provider_and_echo_tool_mediate_runtime_requests() {
     let tool_request = RuntimeToolRequestPayload {
         task_id: "task-runtime-1".to_string(),
         request_id: None,
-        capability: "echo".to_string(),
+        capability: "tool.echo".to_string(),
         input: serde_json::json!({ "text": "runtime MVP" }),
         timeout_seconds: None,
         correlation_id: Some("correlation-tool-1".to_string()),
@@ -479,11 +479,9 @@ async fn behavior_mock_llm_provider_and_echo_tool_mediate_runtime_requests() {
         .await
         .expect("mock LLM should answer");
     let tool_result = echo_tool
-        .invoke(tool_request.input.clone())
+        .invoke(tool_request)
         .await
         .expect("echo tool should answer");
-    let tool_result: serde_json::Value =
-        serde_json::from_value(tool_result).expect("echo tool result should deserialize as JSON");
 
     assert_eq!(
         llm_response.message["content"],

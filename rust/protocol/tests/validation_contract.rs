@@ -1,11 +1,4 @@
-use thalamus_protocol::{
-    payload::{
-        RuntimeAgentErrorPayload, RuntimeAgentExitPayload, RuntimeAgentReadyPayload,
-        RuntimeAgentSpawnPayload, RuntimeLLMRequestPayload, RuntimeTaskAssignPayload,
-        RuntimeTaskResultPayload, RuntimeToolRequestPayload,
-    },
-    validation::validate_and_normalize_payload,
-};
+use thalamus_protocol::validation::validate_and_normalize_payload;
 
 #[test]
 fn unknown_subject_returns_payload_unchanged() {

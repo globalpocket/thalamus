@@ -44,7 +44,7 @@ async fn behavior_public_formatters_expose_stable_display_and_debug_contract() {
 
 #[tokio::test]
 async fn behavior_default_bus_publish_delivers_envelope_to_matching_handler() {
-    let mut bus = BasicBus::default();
+    let bus = BasicBus::default();
     let delivered = Arc::new(AtomicUsize::new(0));
     let delivered_in_handler = Arc::clone(&delivered);
     let handler: Handler = Arc::new(move |envelope| {
@@ -65,7 +65,7 @@ async fn behavior_default_bus_publish_delivers_envelope_to_matching_handler() {
 
 #[tokio::test]
 async fn behavior_publish_maps_panicking_handler_to_protocol_error() {
-    let mut bus = BasicBus::default();
+    let bus = BasicBus::default();
     let handler: Handler = Arc::new(|_| {
         Box::pin(async {
             panic!("handler panic maps to protocol error");

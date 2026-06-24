@@ -24,6 +24,7 @@ use crate::state::{RuntimeState, TaskHandle, TaskState, TaskStatus};
 use crate::tool::ToolRegistry;
 
 /// EventHandler: ユーザーイベントハンドラーの型定義
+/// Takes (subject, envelope) — used by user-facing API.
 pub type EventHandler = Arc<
     dyn Fn(String, EventEnvelope) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>
         + Send
@@ -31,16 +32,13 @@ pub type EventHandler = Arc<
 >;
 
 /// RuntimeCore: 共有ランタイム状態
-///
-/// All internal state is wrapped in `Arc` so that internal handlers
-/// (registered in `start()`) can capture a single clone and access
-/// worker_registry, task_states, llm_provider, tool_registry, and bus.
 #[derive(Clone)]
 pub struct RuntimeCore<B: MessageBus> {
+    #[allow(dead_code)]
     bus: B,
     worker_registry: Arc<RwLock<WorkerRegistry>>,
     task_states: Arc<RwLock<HashMap<String, TaskState>>>,
-    llm_provider: Arc<dyn LlmProvider>,
+    llm_provider: Arc<RwLock<Arc<dyn LlmProvider>>>,
     tool_registry: Arc<RwLock<ToolRegistry>>,
 }
 
@@ -48,14 +46,12 @@ pub struct RuntimeCore<B: MessageBus> {
 pub struct ThalamusRuntime<B: MessageBus> {
     bus: B,
     state: Arc<RwLock<RuntimeState>>,
-    /// User-registered handlers (not auto-registered by start())
-    user_handlers: Arc<RwLock<HashMap<String, EventHandler>>>,
-    task_handles: Arc<RwLock<Vec<TaskHandle>>>,
     /// Internal subscriptions created by start() — used for cleanup in stop()
     internal_subscriptions: Arc<RwLock<Vec<SubscriptionId>>>,
     /// User-submitted subscriptions — also tracked for potential cleanup
     user_subscriptions: Arc<RwLock<Vec<SubscriptionId>>>,
-    llm_provider: Arc<RwLock<Arc<dyn LlmProvider>>>,
+    /// Task handles for tracking spawned futures
+    task_handles: Arc<RwLock<Vec<TaskHandle>>>,
     core: RuntimeCore<B>,
 }
 
@@ -71,23 +67,24 @@ impl<B: MessageBus + 'static> ThalamusRuntime<B> {
     /// 新しいThalamusRuntimeインスタンスを作成する
     pub fn new(bus: B, llm_provider: Arc<dyn LlmProvider>) -> Self {
         let mut registry = ToolRegistry::new();
-        registry.register("tool.echo".to_string(), Box::new(crate::tool::EchoTool));
+        registry.register(
+            "tool.echo".to_string(),
+            Arc::new(crate::tool::EchoTool),
+        );
         // Register "echo" alias for backwards compatibility
         registry.register_alias("echo".to_string(), "tool.echo".to_string());
 
         Self {
             bus: bus.clone(),
             state: Arc::new(RwLock::new(RuntimeState::Initialized)),
-            user_handlers: Arc::new(RwLock::new(HashMap::new())),
-            task_handles: Arc::new(RwLock::new(Vec::new())),
             internal_subscriptions: Arc::new(RwLock::new(Vec::new())),
             user_subscriptions: Arc::new(RwLock::new(Vec::new())),
-            llm_provider: Arc::new(RwLock::new(llm_provider)),
+            task_handles: Arc::new(RwLock::new(Vec::new())),
             core: RuntimeCore {
                 bus,
                 worker_registry: Arc::new(RwLock::new(WorkerRegistry::default())),
                 task_states: Arc::new(RwLock::new(HashMap::new())),
-                llm_provider,
+                llm_provider: Arc::new(RwLock::new(llm_provider)),
                 tool_registry: Arc::new(RwLock::new(registry)),
             },
         }
@@ -95,35 +92,45 @@ impl<B: MessageBus + 'static> ThalamusRuntime<B> {
 
     /// 現在の状態を取得する
     pub async fn state(&self) -> RuntimeState {
-        *self.state.read().await
+        self.state.read().await.clone()
     }
 
     /// ユーザーイベントハンドラーを登録する（busにもsubscribe）
+    ///
+    /// Multiple user handlers can be registered for the same subject.
     pub async fn register_handler(
         &self,
         subject: String,
         handler: EventHandler,
     ) -> Result<SubscriptionId, RuntimeError> {
-        let id = self.bus.subscribe(subject.clone(), handler.clone()).await?;
-        let mut handlers = self.user_handlers.write().await;
-        handlers.insert(subject, handler);
+        // Convert EventHandler to Handler for bus.subscribe()
+        let subject_for_closure = subject.clone();
+        let bus_handler: Handler = Arc::new(move |envelope| {
+            let user_handler = Arc::clone(&handler);
+            let subj = subject_for_closure.clone();
+            Box::pin(async move {
+                user_handler(subj, envelope).await;
+            })
+        });
+        let id = self.bus.subscribe(subject, bus_handler).await
+            .map_err(|e| RuntimeError::BusError(format!("subscribe: {}", e)))?;
         let mut subs = self.user_subscriptions.write().await;
-        subs.push(id);
+        subs.push(id.clone());
         Ok(id)
     }
 
     /// ユーザーイベントハンドラーを削除する（busからもunsubscribe）
     pub async fn unregister_handler(&self, id: SubscriptionId) -> Result<(), RuntimeError> {
-        self.bus.unsubscribe(id.clone()).await?;
+        self.bus.unsubscribe(id.clone()).await
+            .map_err(|e| RuntimeError::BusError(format!("unsubscribe: {}", e)))?;
         let mut subs = self.user_subscriptions.write().await;
         subs.retain(|s| s != &id);
-        // Note: we cannot remove from user_handlers by id since it's keyed by subject
         Ok(())
     }
 
     /// ユーザーハンドラー数を返す
     pub async fn user_handler_count(&self) -> usize {
-        self.user_handlers.read().await.len()
+        self.user_subscriptions.read().await.len()
     }
 
     /// タスクをspawnする
@@ -164,21 +171,21 @@ impl<B: MessageBus + 'static> ThalamusRuntime<B> {
     }
 
     /// ツールを登録する
-    pub async fn register_tool(&self, capability: String, tool: Box<dyn crate::tool::Tool>) {
+    pub async fn register_tool(&self, capability: String, tool: Arc<dyn crate::tool::Tool>) {
         let mut registry = self.core.tool_registry.write().await;
         registry.register(capability, tool);
     }
 
     /// ツールにエイリアスを登録する
-    pub async fn register_tool_alias(&self, alias: String, target: String) {
+    pub async fn register_tool_alias(&self, alias: String, target: String) -> bool {
         let mut registry = self.core.tool_registry.write().await;
-        registry.register_alias(alias, target);
+        registry.register_alias(alias, target)
     }
 
     /// ツールを削除する
-    pub async fn unregister_tool(&self, capability: &str) {
+    pub async fn unregister_tool(&self, capability: &str) -> bool {
         let mut registry = self.core.tool_registry.write().await;
-        registry.unregister(capability);
+        registry.unregister(capability).is_some()
     }
 
     /// 登録済みツールの一覧を返す（ソート済み）
@@ -189,8 +196,7 @@ impl<B: MessageBus + 'static> ThalamusRuntime<B> {
 
     /// LLMプロバイダーを設定し直す
     pub async fn set_llm_provider(&self, provider: Arc<dyn LlmProvider>) {
-        let mut lp = self.llm_provider.write().await;
-        *lp = provider;
+        *self.core.llm_provider.write().await = provider;
     }
 
     /// Create an envelope with a pre-generated event_id
@@ -221,54 +227,6 @@ impl<B: MessageBus + 'static> ThalamusRuntime<B> {
         Self::envelope_with_id(subject, source, event_id, payload)
     }
 
-    /// Generate a response envelope for llm.response
-    async fn generate_llm_response(
-        &self,
-        request: RuntimeLLMRequestPayload,
-        response: RuntimeLLMResponsePayload,
-    ) -> Result<EventEnvelope, RuntimeError> {
-        let payload = serde_json::to_value(&response)
-            .map_err(|e| RuntimeError::Internal(format!("serialize llm response: {}", e)))?;
-        let mut event = Self::envelope(
-            RUNTIME_LLM_RESPONSE.to_string(),
-            "thalamus-runtime".to_string(),
-            payload,
-        );
-        event.correlation_id = Some(request.task_id.clone());
-        event.causation_id = Some(request.request_id.clone());
-        Ok(event)
-    }
-
-    /// Generate a response envelope for tool.result
-    async fn generate_tool_result(
-        &self,
-        request: RuntimeToolRequestPayload,
-        status: &str,
-        output: Option<serde_json::Value>,
-        error: serde_json::Value,
-    ) -> Result<EventEnvelope, RuntimeError> {
-        let result = RuntimeToolResultPayload {
-            task_id: request.task_id.clone(),
-            capability: request.capability.clone(),
-            request_id: request.request_id.clone(),
-            status: status.to_string(),
-            output: output.clone(),
-            result: output,
-            error,
-            correlation_id: request.correlation_id.clone(),
-        };
-        let payload =
-            serde_json::to_value(&result).map_err(|e| RuntimeError::Internal(format!("serialize tool result: {}", e)))?;
-        let mut event = Self::envelope(
-            RUNTIME_TOOL_RESULT.to_string(),
-            "thalamus-runtime".to_string(),
-            payload,
-        );
-        event.correlation_id = Some(request.task_id);
-        event.causation_id = Some(request.request_id);
-        Ok(event)
-    }
-
     /// ランタイムを起動する
     ///
     /// Registers internal handlers for all canonical subjects.
@@ -287,374 +245,388 @@ impl<B: MessageBus + 'static> ThalamusRuntime<B> {
         // Register internal handlers
         let core = self.core.clone();
         let bus = self.bus.clone();
-        let llm_provider_guard = self.llm_provider.read().await;
-        let llm_provider = llm_provider_guard.clone();
-        drop(llm_provider_guard);
-
-        let internal_bus = bus.clone();
-        let internal_subscriptions = self.internal_subscriptions.clone();
 
         // runtime.agent.spawn — observation only in MVP
-        let spawn_handler: Handler = Arc::new(move |_envelope| {
-            // Observation only — do nothing
-            Box::pin(async move {})
-        });
-        let spawn_sub = internal_bus
-            .subscribe(RUNTIME_AGENT_SPAWN.to_string(), spawn_handler)
-            .await
-            .map_err(|e| RuntimeError::BusError(format!("subscribe spawn: {}", e)))?;
-        self.internal_subscriptions.write().await.push(spawn_sub);
+        {
+            let core = core.clone();
+            let b = bus.clone();
+            let spawn_handler: Handler = Arc::new(move |envelope| {
+                let _core = core.clone();
+                let b = b.clone();
+                Box::pin(async move {
+                    let _ = b.publish(envelope).await;
+                })
+            });
+            let spawn_sub = bus
+                .subscribe(RUNTIME_AGENT_SPAWN.to_string(), spawn_handler)
+                .await
+                .map_err(|e| RuntimeError::BusError(format!("subscribe spawn: {}", e)))?;
+            self.internal_subscriptions.write().await.push(spawn_sub);
+        }
 
-        // runtime.agent.ready
-        let ready_core = core.clone();
-        let ready_bus = bus.clone();
-        let ready_handler: Handler = Arc::new(move |envelope| {
-            let core = ready_core.clone();
-            let bus = ready_bus.clone();
-            Box::pin(async move {
-                if let Ok(payload) =
-                    serde_json::from_value::<RuntimeAgentReadyPayload>(envelope.payload.clone())
-                {
-                    core.worker_registry
-                        .write()
-                        .await
-                        .mark_ready(payload.agent_id, payload.capabilities);
-                }
-                // Forward to bus for user handlers
-                let _ = bus.publish(envelope).await;
-            })
-        });
-        let ready_sub = ready_bus
-            .subscribe(RUNTIME_AGENT_READY.to_string(), ready_handler)
-            .await
-            .map_err(|e| RuntimeError::BusError(format!("subscribe ready: {}", e)))?;
-        self.internal_subscriptions.write().await.push(ready_sub);
-
-        // runtime.agent.exit
-        let exit_core = core.clone();
-        let exit_bus = bus.clone();
-        let exit_handler: Handler = Arc::new(move |envelope| {
-            let core = exit_core.clone();
-            let bus = exit_bus.clone();
-            Box::pin(async move {
-                if let Ok(payload) =
-                    serde_json::from_value::<RuntimeAgentExitPayload>(envelope.payload.clone())
-                {
-                    core.worker_registry
-                        .write()
-                        .await
-                        .mark_exited(payload.agent_id, payload.reason);
-                }
-                let _ = bus.publish(envelope).await;
-            })
-        });
-        let exit_sub = exit_bus
-            .subscribe(RUNTIME_AGENT_EXIT.to_string(), exit_handler)
-            .await
-            .map_err(|e| RuntimeError::BusError(format!("subscribe exit: {}", e)))?;
-        self.internal_subscriptions.write().await.push(exit_sub);
-
-        // runtime.agent.error
-        let error_core = core.clone();
-        let error_bus = bus.clone();
-        let error_handler: Handler = Arc::new(move |envelope| {
-            let core = error_core.clone();
-            let bus = error_bus.clone();
-            Box::pin(async move {
-                if let Ok(payload) =
-                    serde_json::from_value::<RuntimeAgentErrorPayload>(envelope.payload.clone())
-                {
-                    // Only mark_error if agent_id is present
-                    if let Some(agent_id) = payload.agent_id {
-                        core.worker_registry.write().await.mark_error(
-                            agent_id,
-                            payload.task_id,
-                            payload.error,
-                        );
-                    }
-                }
-                let _ = bus.publish(envelope).await;
-            })
-        });
-        let error_sub = error_bus
-            .subscribe(RUNTIME_AGENT_ERROR.to_string(), error_handler)
-            .await
-            .map_err(|e| RuntimeError::BusError(format!("subscribe error: {}", e)))?;
-        self.internal_subscriptions.write().await.push(error_sub);
-
-        // runtime.task.assign
-        let task_core = core.clone();
-        let task_assign_bus = bus.clone();
-        let task_assign_handler: Handler = Arc::new(move |envelope| {
-            let core = task_core.clone();
-            let bus = task_assign_bus.clone();
-            Box::pin(async move {
-                if let Ok(payload) =
-                    serde_json::from_value::<RuntimeTaskAssignPayload>(envelope.payload.clone())
-                {
-                    let task = {
-                        let mut states = core.task_states.write().await;
-                        states
-                            .entry(payload.task_id.clone())
-                            .or_insert_with(|| TaskState::new(payload.task_id.clone()))
-                            .clone()
-                    };
-                    *task.parent_task_id.write().await = payload.parent_task_id;
-                    *task.input.write().await = payload.input;
-                    *task.capabilities.write().await = payload.capabilities;
-                    *task.metadata.write().await = payload.metadata;
-                    *task.correlation_id.write().await = payload.correlation_id;
-                    if let Some(agent_id) = payload.agent_id {
-                        task.assign_to(agent_id).await;
-                    } else {
-                        task.set_task_status(TaskStatus::Assigned).await;
-                    }
-                }
-                let _ = bus.publish(envelope).await;
-            })
-        });
-        let task_assign_sub = task_assign_bus
-            .subscribe(RUNTIME_TASK_ASSIGN.to_string(), task_assign_handler)
-            .await
-            .map_err(|e| RuntimeError::BusError(format!("subscribe task.assign: {}", e)))?;
-        self.internal_subscriptions.write().await.push(task_assign_sub);
-
-        // runtime.task.result
-        let task_result_core = core.clone();
-        let task_result_bus = bus.clone();
-        let task_result_handler: Handler = Arc::new(move |envelope| {
-            let core = task_result_core.clone();
-            let bus = task_result_bus.clone();
-            Box::pin(async move {
-                if let Ok(payload) =
-                    serde_json::from_value::<RuntimeTaskResultPayload>(envelope.payload.clone())
-                {
-                    let has_error = !payload.error.is_null()
-                        && !payload
-                            .error
-                            .as_object()
-                            .is_some_and(|object| object.is_empty());
-                    let status = if has_error {
-                        TaskStatus::Failed
-                    } else {
-                        TaskStatus::from_runtime_status(&payload.status)
-                    };
-                    let task = {
-                        let mut states = core.task_states.write().await;
-                        states
-                            .entry(payload.task_id.clone())
-                            .or_insert_with(|| TaskState::new(payload.task_id.clone()))
-                            .clone()
-                    };
-                    *task.result.write().await = payload.result;
-                    *task.error.write().await = payload.error;
-                    *task.correlation_id.write().await = payload.correlation_id;
-                    task.set_task_status(status).await;
-                }
-                let _ = bus.publish(envelope).await;
-            })
-        });
-        let task_result_sub = task_result_bus
-            .subscribe(RUNTIME_TASK_RESULT.to_string(), task_result_handler)
-            .await
-            .map_err(|e| RuntimeError::BusError(format!("subscribe task.result: {}", e)))?;
-        self.internal_subscriptions.write().await.push(task_result_sub);
-
-        // runtime.llm.request
-        let llm_core = core.clone();
-        let llm_bus = bus.clone();
-        let llm_provider_for_handler = llm_provider.clone();
-        let llm_request_handler: Handler = Arc::new(move |envelope| {
-            let core = llm_core.clone();
-            let b = llm_bus.clone();
-            let provider = llm_provider_for_handler.clone();
-            Box::pin(async move {
-                // Parse request
-                let request =
-                    match serde_json::from_value::<RuntimeLLMRequestPayload>(envelope.payload.clone())
+        // runtime.agent.ready — process and forward (do NOT re-publish)
+        {
+            let core = core.clone();
+            let b = bus.clone();
+            let ready_handler: Handler = Arc::new(move |envelope| {
+                let core = core.clone();
+                let b = b.clone();
+                Box::pin(async move {
+                    if let Ok(payload) =
+                        serde_json::from_value::<RuntimeAgentReadyPayload>(envelope.payload.clone())
                     {
-                        Ok(r) => r,
-                        Err(_) => {
-                            let _ = b.publish(envelope).await;
-                            return;
-                        }
-                    };
-
-                // Update task state
-                let task = {
-                    let mut states = core.task_states.write().await;
-                    states
-                        .entry(request.task_id.clone())
-                        .or_insert_with(|| TaskState::new(request.task_id.clone()))
-                        .clone()
-                };
-                *task.correlation_id.write().await = request.correlation_id.clone();
-                task.set_task_status(TaskStatus::WaitingForLlm).await;
-
-                // Call provider exactly once
-                let response_result = provider.complete(request.clone()).await;
-
-                match response_result {
-                    Ok(response) => {
-                        let response_event = match core
-                            .generate_llm_response_envelope(request, response)
+                        core.worker_registry
+                            .write()
                             .await
+                            .mark_ready(payload.agent_id, payload.capabilities);
+                    }
+                    let _ = b.publish(envelope).await;
+                })
+            });
+            let ready_sub = bus
+                .subscribe(RUNTIME_AGENT_READY.to_string(), ready_handler)
+                .await
+                .map_err(|e| RuntimeError::BusError(format!("subscribe ready: {}", e)))?;
+            self.internal_subscriptions.write().await.push(ready_sub);
+        }
+
+        // runtime.agent.exit — process and forward (do NOT re-publish)
+        {
+            let core = core.clone();
+            let b = bus.clone();
+            let exit_handler: Handler = Arc::new(move |envelope| {
+                let core = core.clone();
+                let b = b.clone();
+                Box::pin(async move {
+                    if let Ok(payload) =
+                        serde_json::from_value::<RuntimeAgentExitPayload>(envelope.payload.clone())
+                    {
+                        core.worker_registry
+                            .write()
+                            .await
+                            .mark_exited(payload.agent_id, payload.reason);
+                    }
+                    let _ = b.publish(envelope).await;
+                })
+            });
+            let exit_sub = bus
+                .subscribe(RUNTIME_AGENT_EXIT.to_string(), exit_handler)
+                .await
+                .map_err(|e| RuntimeError::BusError(format!("subscribe exit: {}", e)))?;
+            self.internal_subscriptions.write().await.push(exit_sub);
+        }
+
+        // runtime.agent.error — process and forward (do NOT re-publish)
+        {
+            let core = core.clone();
+            let b = bus.clone();
+            let error_handler: Handler = Arc::new(move |envelope| {
+                let core = core.clone();
+                let b = b.clone();
+                Box::pin(async move {
+                    if let Ok(payload) =
+                        serde_json::from_value::<RuntimeAgentErrorPayload>(envelope.payload.clone())
+                    {
+                        // Only mark_error if agent_id is present
+                        if let Some(agent_id) = payload.agent_id {
+                            core.worker_registry.write().await.mark_error(
+                                agent_id,
+                                payload.task_id,
+                                payload.error,
+                            );
+                        }
+                    }
+                    let _ = b.publish(envelope).await;
+                })
+            });
+            let error_sub = bus
+                .subscribe(RUNTIME_AGENT_ERROR.to_string(), error_handler)
+                .await
+                .map_err(|e| RuntimeError::BusError(format!("subscribe error: {}", e)))?;
+            self.internal_subscriptions.write().await.push(error_sub);
+        }
+
+        // runtime.task.assign — process and forward (do NOT re-publish)
+        {
+            let core = core.clone();
+            let b = bus.clone();
+            let task_assign_handler: Handler = Arc::new(move |envelope| {
+                let core = core.clone();
+                let b = b.clone();
+                Box::pin(async move {
+                    if let Ok(payload) =
+                        serde_json::from_value::<RuntimeTaskAssignPayload>(envelope.payload.clone())
+                    {
+                        let task = {
+                            let mut states = core.task_states.write().await;
+                            states
+                                .entry(payload.task_id.clone())
+                                .or_insert_with(|| TaskState::new(payload.task_id.clone()))
+                                .clone()
+                        };
+                        *task.parent_task_id.write().await = payload.parent_task_id;
+                        *task.input.write().await = payload.input;
+                        *task.capabilities.write().await = payload.capabilities;
+                        *task.metadata.write().await = payload.metadata;
+                        *task.correlation_id.write().await = payload.correlation_id;
+                        if let Some(agent_id) = payload.agent_id {
+                            task.assign_to(agent_id).await;
+                        } else {
+                            task.set_task_status(TaskStatus::Assigned).await;
+                        }
+                    }
+                    let _ = b.publish(envelope).await;
+                })
+            });
+            let task_assign_sub = bus
+                .subscribe(RUNTIME_TASK_ASSIGN.to_string(), task_assign_handler)
+                .await
+                .map_err(|e| RuntimeError::BusError(format!("subscribe task.assign: {}", e)))?;
+            self.internal_subscriptions.write().await.push(task_assign_sub);
+        }
+
+        // runtime.task.result — process and forward (do NOT re-publish)
+        {
+            let core = core.clone();
+            let b = bus.clone();
+            let task_result_handler: Handler = Arc::new(move |envelope| {
+                let core = core.clone();
+                let b = b.clone();
+                Box::pin(async move {
+                    if let Ok(payload) =
+                        serde_json::from_value::<RuntimeTaskResultPayload>(envelope.payload.clone())
+                    {
+                        let has_error = !payload.error.is_null()
+                            && !payload
+                                .error
+                                .as_object()
+                                .is_some_and(|object| object.is_empty());
+                        let status = if has_error {
+                            TaskStatus::Failed
+                        } else {
+                            TaskStatus::from_runtime_status(&payload.status)
+                        };
+                        let task = {
+                            let mut states = core.task_states.write().await;
+                            states
+                                .entry(payload.task_id.clone())
+                                .or_insert_with(|| TaskState::new(payload.task_id.clone()))
+                                .clone()
+                        };
+                        *task.result.write().await = payload.result;
+                        *task.error.write().await = payload.error;
+                        *task.correlation_id.write().await = payload.correlation_id;
+                        task.set_task_status(status).await;
+                    }
+                    let _ = b.publish(envelope).await;
+                })
+            });
+            let task_result_sub = bus
+                .subscribe(RUNTIME_TASK_RESULT.to_string(), task_result_handler)
+                .await
+                .map_err(|e| RuntimeError::BusError(format!("subscribe task.result: {}", e)))?;
+            self.internal_subscriptions.write().await.push(task_result_sub);
+        }
+
+        // runtime.llm.request — process, call provider, publish response (do NOT re-publish request)
+        {
+            let core = core.clone();
+            let b = bus.clone();
+            let llm_request_handler: Handler = Arc::new(move |envelope| {
+                let core = core.clone();
+                let b = b.clone();
+                Box::pin(async move {
+                    // Parse request
+                    let request =
+                        match serde_json::from_value::<RuntimeLLMRequestPayload>(envelope.payload.clone())
                         {
-                            Ok(e) => e,
+                            Ok(r) => r,
                             Err(_) => {
                                 let _ = b.publish(envelope).await;
                                 return;
                             }
                         };
-                        let _ = b.publish(response_event).await;
-                    }
-                    Err(_) => {
-                        // Provider error — publish error response, do not fail the request
-                        let error_response = RuntimeLLMResponsePayload {
-                            task_id: request.task_id.clone(),
-                            model: request.model,
-                            request_id: request.request_id.clone(),
-                            status: "error".to_string(),
-                            text: None,
-                            message: serde_json::json!({}),
-                            usage: serde_json::Value::Null,
-                            error: serde_json::json!({
-                                "kind": "provider_error",
-                                "message": "provider returned error"
-                            }),
-                            correlation_id: request.correlation_id,
-                        };
-                        let error_event = match core
-                            .generate_llm_response_envelope(request, error_response)
-                            .await
-                        {
-                            Ok(e) => e,
-                            Err(_) => {
-                                let _ = b.publish(envelope).await;
-                                return;
-                            }
-                        };
-                        let _ = b.publish(error_event).await;
-                    }
-                }
-            })
-        });
-        let llm_request_sub = llm_bus
-            .subscribe(RUNTIME_LLM_REQUEST.to_string(), llm_request_handler)
-            .await
-            .map_err(|e| RuntimeError::BusError(format!("subscribe llm.request: {}", e)))?;
-        self.internal_subscriptions.write().await.push(llm_request_sub);
 
-        // runtime.tool.request
-        let tool_core = core.clone();
-        let tool_bus = bus.clone();
-        let tool_request_handler: Handler = Arc::new(move |envelope| {
-            let core = tool_core.clone();
-            let b = tool_bus.clone();
-            Box::pin(async move {
-                let request =
-                    match serde_json::from_value::<RuntimeToolRequestPayload>(envelope.payload.clone())
-                    {
-                        Ok(r) => r,
-                        Err(_) => {
-                            let _ = b.publish(envelope).await;
-                            return;
-                        }
+                    // Keep a reference to the original envelope for correlation
+                    let request_event = envelope.clone();
+
+                    // Update task state
+                    let task = {
+                        let mut states = core.task_states.write().await;
+                        states
+                            .entry(request.task_id.clone())
+                            .or_insert_with(|| TaskState::new(request.task_id.clone()))
+                            .clone()
                     };
+                    *task.correlation_id.write().await = request.correlation_id.clone();
+                    task.set_task_status(TaskStatus::WaitingForLlm).await;
 
-                // Update task state
-                let task = {
-                    let mut states = core.task_states.write().await;
-                    states
-                        .entry(request.task_id.clone())
-                        .or_insert_with(|| TaskState::new(request.task_id.clone()))
-                        .clone()
-                };
-                *task.correlation_id.write().await = request.correlation_id.clone();
-                task.set_task_status(TaskStatus::WaitingForTool).await;
+                    // Call provider — read fresh provider from core
+                    let provider = {
+                        core.llm_provider.read().await.clone()
+                    };
+                    let response_result = provider.complete(request.clone()).await;
 
-                // Look up tool
-                let tool_registry = core.tool_registry.read().await;
-                let tool = tool_registry.get(&request.capability);
-
-                match tool {
-                    Some(t) => {
-                        // Release tool_registry lock before invoking
-                        drop(tool_registry);
-                        let result = t.invoke(request.input.clone()).await;
-                        match result {
-                            Ok(output) => {
-                                let result_event = match core
-                                    .generate_tool_result_envelope(
-                                        request,
-                                        "completed",
-                                        Some(output),
-                                        serde_json::json!({}),
-                                    )
-                                    .await
-                                {
-                                    Ok(e) => e,
-                                    Err(_) => {
-                                        let _ = b.publish(envelope).await;
-                                        return;
-                                    }
-                                };
-                                let _ = b.publish(result_event).await;
-                            }
-                            Err(_) => {
-                                let result_event = match core
-                                    .generate_tool_result_envelope(
-                                        request,
-                                        "error",
-                                        None,
-                                        serde_json::json!({
-                                            "kind": "tool_error",
-                                            "message": "tool invocation failed"
-                                        }),
-                                    )
-                                    .await
-                                {
-                                    Ok(e) => e,
-                                    Err(_) => {
-                                        let _ = b.publish(envelope).await;
-                                        return;
-                                    }
-                                };
-                                let _ = b.publish(result_event).await;
-                            }
+                    match response_result {
+                        Ok(response) => {
+                            let response_event = match core
+                                .generate_llm_response_envelope(&request_event, &request, response)
+                                .await
+                            {
+                                Ok(e) => e,
+                                Err(_) => {
+                                    let _ = b.publish(request_event).await;
+                                    return;
+                                }
+                            };
+                            let _ = b.publish(response_event).await;
                         }
-                    }
-                    None => {
-                        // Unknown tool — publish error result
-                        drop(tool_registry);
-                        let result_event = match core
-                            .generate_tool_result_envelope(
-                                request,
-                                "error",
-                                None,
-                                serde_json::json!({
-                                    "kind": "unknown_tool",
-                                    "message": format!("tool not found: {}", "unknown")
+                        Err(err) => {
+                            // Provider error — publish error response, do not fail the request
+                            let error_response = RuntimeLLMResponsePayload {
+                                task_id: request.task_id.clone(),
+                                model: request.model.clone(),
+                                request_id: request.request_id.clone(),
+                                status: "error".to_string(),
+                                text: None,
+                                message: serde_json::json!({}),
+                                usage: serde_json::Value::Null,
+                                error: serde_json::json!({
+                                    "kind": "provider_error",
+                                    "message": err.to_string()
                                 }),
-                            )
-                            .await
+                                correlation_id: request.correlation_id.clone(),
+                            };
+                            let error_event = match core
+                                .generate_llm_response_envelope(&request_event, &request, error_response)
+                                .await
+                            {
+                                Ok(e) => e,
+                                Err(_) => {
+                                    let _ = b.publish(request_event).await;
+                                    return;
+                                }
+                            };
+                            let _ = b.publish(error_event).await;
+                        }
+                    }
+                })
+            });
+            let llm_request_sub = bus
+                .subscribe(RUNTIME_LLM_REQUEST.to_string(), llm_request_handler)
+                .await
+                .map_err(|e| RuntimeError::BusError(format!("subscribe llm.request: {}", e)))?;
+            self.internal_subscriptions.write().await.push(llm_request_sub);
+        }
+
+        // runtime.tool.request — process, call tool, publish result (do NOT re-publish request)
+        {
+            let core = core.clone();
+            let b = bus.clone();
+            let tool_request_handler: Handler = Arc::new(move |envelope| {
+                let core = core.clone();
+                let b = b.clone();
+                Box::pin(async move {
+                    let request =
+                        match serde_json::from_value::<RuntimeToolRequestPayload>(envelope.payload.clone())
                         {
-                            Ok(e) => e,
+                            Ok(r) => r,
                             Err(_) => {
                                 let _ = b.publish(envelope).await;
                                 return;
                             }
                         };
-                        let _ = b.publish(result_event).await;
+
+                    // Keep a reference to the original envelope for correlation
+                    let request_event = envelope.clone();
+
+                    // Update task state
+                    let task = {
+                        let mut states = core.task_states.write().await;
+                        states
+                            .entry(request.task_id.clone())
+                            .or_insert_with(|| TaskState::new(request.task_id.clone()))
+                            .clone()
+                    };
+                    *task.correlation_id.write().await = request.correlation_id.clone();
+                    task.set_task_status(TaskStatus::WaitingForTool).await;
+
+                    // Look up tool
+                    let tool_registry = core.tool_registry.read().await;
+                    let tool = tool_registry.get(&request.capability);
+
+                    match tool {
+                        Some(t) => {
+                            // Release tool_registry lock before invoking
+                            drop(tool_registry);
+                            let result = t.invoke(request.clone()).await;
+                            match result {
+                                Ok(result_payload) => {
+                                    let result_event = match core
+                                        .generate_tool_result_envelope(
+                                            &request_event,
+                                            &request,
+                                            result_payload,
+                                        )
+                                        .await
+                                    {
+                                        Ok(e) => e,
+                                        Err(_) => {
+                                            let _ = b.publish(request_event).await;
+                                            return;
+                                        }
+                                    };
+                                    let _ = b.publish(result_event).await;
+                                }
+                                Err(err) => {
+                                    let result_event = match core
+                                        .generate_tool_result_envelope_error(
+                                            &request_event,
+                                            &request,
+                                            "tool_error",
+                                            &err.to_string(),
+                                        )
+                                        .await
+                                    {
+                                        Ok(e) => e,
+                                        Err(_) => {
+                                            let _ = b.publish(request_event).await;
+                                            return;
+                                        }
+                                    };
+                                    let _ = b.publish(result_event).await;
+                                }
+                            }
+                        }
+                        None => {
+                            // Unknown tool — publish error result with actual capability name
+                            drop(tool_registry);
+                            let result_event = match core
+                                .generate_tool_result_envelope_error(
+                                    &request_event,
+                                    &request,
+                                    "capability_not_found",
+                                    &format!("tool not found: {}", request.capability),
+                                )
+                                .await
+                            {
+                                Ok(e) => e,
+                                Err(_) => {
+                                    let _ = b.publish(request_event).await;
+                                    return;
+                                }
+                            };
+                            let _ = b.publish(result_event).await;
+                        }
                     }
-                }
-            })
-        });
-        let tool_request_sub = tool_bus
-            .subscribe(RUNTIME_TOOL_REQUEST.to_string(), tool_request_handler)
-            .await
-            .map_err(|e| RuntimeError::BusError(format!("subscribe tool.request: {}", e)))?;
-        self.internal_subscriptions.write().await.push(tool_request_sub);
+                })
+            });
+            let tool_request_sub = bus
+                .subscribe(RUNTIME_TOOL_REQUEST.to_string(), tool_request_handler)
+                .await
+                .map_err(|e| RuntimeError::BusError(format!("subscribe tool.request: {}", e)))?;
+            self.internal_subscriptions.write().await.push(tool_request_sub);
+        }
 
         *state = RuntimeState::Running;
         Ok(())
@@ -662,7 +634,7 @@ impl<B: MessageBus + 'static> ThalamusRuntime<B> {
 
     /// ランタイムを停止する
     ///
-    /// Unsubscribes internal handlers, closes the bus, and transitions to Stopped.
+    /// Unsubscribes internal handlers, clears subscriptions, closes the bus, and transitions to Stopped.
     pub async fn stop(&mut self) -> Result<(), RuntimeError> {
         let mut state = self.state.write().await;
 
@@ -678,12 +650,13 @@ impl<B: MessageBus + 'static> ThalamusRuntime<B> {
 
         *state = RuntimeState::Stopping;
 
-        // Unsubscribe internal handlers
+        // Unsubscribe internal handlers and clear the vec
         {
-            let subs = self.internal_subscriptions.write().await;
+            let mut subs = self.internal_subscriptions.write().await;
             for sub_id in subs.iter() {
                 let _ = self.bus.unsubscribe(sub_id.clone()).await;
             }
+            subs.clear();
         }
 
         // Close the bus
@@ -738,25 +711,25 @@ impl<B: MessageBus + 'static> ThalamusRuntime<B> {
         subject: String,
         event: EventEnvelope,
     ) -> Result<(), RuntimeError> {
-        let handlers = self.user_handlers.read().await;
-
-        if let Some(handler) = handlers.get(&subject) {
-            handler(subject, event).await;
-            Ok(())
-        } else {
-            Err(RuntimeError::ScheduleError(format!(
-                "no handler for subject: {}",
-                subject
-            )))
-        }
+        let _ = subject;
+        let _ = event;
+        Err(RuntimeError::ScheduleError(
+            "use publish() instead".to_string(),
+        ))
     }
 }
 
 impl<B: MessageBus + 'static> RuntimeCore<B> {
-    /// Generate an llm.response envelope
+    /// Generate an llm.response envelope with correct correlation/causation semantics.
+    ///
+    /// envelope.causation_id = request_event.id
+    /// envelope.correlation_id = request_event.correlation_id
+    ///     .or_else(|| request_payload.correlation_id.clone())
+    ///     .or_else(|| Some(request_event.id.clone()))
     async fn generate_llm_response_envelope(
         &self,
-        request: RuntimeLLMRequestPayload,
+        request_event: &EventEnvelope,
+        request_payload: &RuntimeLLMRequestPayload,
         response: RuntimeLLMResponsePayload,
     ) -> Result<EventEnvelope, RuntimeError> {
         let payload = serde_json::to_value(&response)
@@ -766,38 +739,66 @@ impl<B: MessageBus + 'static> RuntimeCore<B> {
             "thalamus-runtime".to_string(),
             payload,
         );
-        event.correlation_id = Some(request.task_id);
-        event.causation_id = Some(request.request_id);
+        event.causation_id = Some(request_event.id.clone());
+        event.correlation_id = request_event.correlation_id.clone()
+            .or_else(|| request_payload.correlation_id.clone())
+            .or_else(|| Some(request_event.id.clone()));
         Ok(event)
     }
 
-    /// Generate a tool.result envelope
+    /// Generate a tool.result envelope with correct correlation/causation semantics.
     async fn generate_tool_result_envelope(
         &self,
-        request: RuntimeToolRequestPayload,
-        status: &str,
-        output: Option<serde_json::Value>,
-        error: serde_json::Value,
+        request_event: &EventEnvelope,
+        request_payload: &RuntimeToolRequestPayload,
+        result_payload: RuntimeToolResultPayload,
     ) -> Result<EventEnvelope, RuntimeError> {
-        let result = RuntimeToolResultPayload {
-            task_id: request.task_id.clone(),
-            capability: request.capability.clone(),
-            request_id: request.request_id.clone(),
-            status: status.to_string(),
-            output: output.clone(),
-            result: output,
-            error,
-            correlation_id: request.correlation_id.clone(),
-        };
-        let payload = serde_json::to_value(&result)
+        let payload = serde_json::to_value(&result_payload)
             .map_err(|e| RuntimeError::Internal(format!("serialize tool result: {}", e)))?;
         let mut event = ThalamusRuntime::<B>::envelope(
             RUNTIME_TOOL_RESULT.to_string(),
             "thalamus-runtime".to_string(),
             payload,
         );
-        event.correlation_id = Some(request.task_id);
-        event.causation_id = Some(request.request_id);
+        event.causation_id = Some(request_event.id.clone());
+        event.correlation_id = request_event.correlation_id.clone()
+            .or_else(|| request_payload.correlation_id.clone())
+            .or_else(|| Some(request_event.id.clone()));
+        Ok(event)
+    }
+
+    /// Generate a tool.result error envelope.
+    async fn generate_tool_result_envelope_error(
+        &self,
+        request_event: &EventEnvelope,
+        request_payload: &RuntimeToolRequestPayload,
+        error_kind: &str,
+        error_message: &str,
+    ) -> Result<EventEnvelope, RuntimeError> {
+        let result_payload = RuntimeToolResultPayload {
+            task_id: request_payload.task_id.clone(),
+            capability: request_payload.capability.clone(),
+            request_id: request_payload.request_id.clone(),
+            status: "error".to_string(),
+            output: None,
+            result: None,
+            error: serde_json::json!({
+                "kind": error_kind,
+                "message": error_message,
+            }),
+            correlation_id: request_payload.correlation_id.clone(),
+        };
+        let payload = serde_json::to_value(&result_payload)
+            .map_err(|e| RuntimeError::Internal(format!("serialize tool result: {}", e)))?;
+        let mut event = ThalamusRuntime::<B>::envelope(
+            RUNTIME_TOOL_RESULT.to_string(),
+            "thalamus-runtime".to_string(),
+            payload,
+        );
+        event.causation_id = Some(request_event.id.clone());
+        event.correlation_id = request_event.correlation_id.clone()
+            .or_else(|| request_payload.correlation_id.clone())
+            .or_else(|| Some(request_event.id.clone()));
         Ok(event)
     }
 }

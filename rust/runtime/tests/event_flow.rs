@@ -3,17 +3,17 @@ use std::sync::Arc;
 use thalamus_bus::BasicBus;
 use thalamus_protocol::{
     payload::{
-        RuntimeAgentErrorPayload, RuntimeAgentExitPayload, RuntimeAgentReadyPayload,
-        RuntimeLLMRequestPayload, RuntimeTaskAssignPayload, RuntimeTaskResultPayload,
+        RuntimeAgentErrorPayload, RuntimeAgentReadyPayload,
+        RuntimeLLMRequestPayload, RuntimeTaskAssignPayload,
         RuntimeToolRequestPayload,
     },
     subject::{
-        RUNTIME_AGENT_ERROR, RUNTIME_AGENT_EXIT, RUNTIME_AGENT_READY, RUNTIME_AGENT_SPAWN,
-        RUNTIME_LLM_REQUEST, RUNTIME_LLM_RESPONSE, RUNTIME_TASK_ASSIGN, RUNTIME_TASK_RESULT,
+        RUNTIME_AGENT_ERROR, RUNTIME_AGENT_READY,
+        RUNTIME_LLM_REQUEST, RUNTIME_LLM_RESPONSE, RUNTIME_TASK_ASSIGN,
         RUNTIME_TOOL_REQUEST, RUNTIME_TOOL_RESULT,
     },
 };
-use thalamus_runtime::{MockLlmProvider, ThalamusRuntime};
+use thalamus_runtime::MockLlmProvider;
 
 #[tokio::test]
 async fn invalid_canonical_payload_is_not_recorded() {
@@ -167,9 +167,10 @@ async fn provider_called_exactly_once() {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     let call_count = Arc::new(AtomicUsize::new(0));
-    let count_clone = call_count.clone();
 
-    struct CountingProvider;
+    struct CountingProvider {
+        count: Arc<AtomicUsize>,
+    }
 
     #[async_trait::async_trait]
     impl thalamus_runtime::llm::LlmProvider for CountingProvider {
@@ -177,7 +178,7 @@ async fn provider_called_exactly_once() {
             &self,
             _request: RuntimeLLMRequestPayload,
         ) -> Result<thalamus_protocol::payload::RuntimeLLMResponsePayload, thalamus_runtime::RuntimeError> {
-            call_count.fetch_add(1, Ordering::SeqCst);
+            self.count.fetch_add(1, Ordering::SeqCst);
             Ok(thalamus_protocol::payload::RuntimeLLMResponsePayload {
                 task_id: "task-1".to_string(),
                 model: Some("mock".to_string()),
@@ -194,7 +195,7 @@ async fn provider_called_exactly_once() {
 
     let bus = BasicBus::new();
     let observer = bus.clone();
-    let mut runtime = thalamus_runtime::ThalamusRuntime::new(bus, Arc::new(CountingProvider));
+    let mut runtime = thalamus_runtime::ThalamusRuntime::new(bus, Arc::new(CountingProvider { count: call_count.clone() }));
 
     runtime.start().await.expect("runtime should start");
 
@@ -229,7 +230,6 @@ async fn tool_called_exactly_once() {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     let call_count = Arc::new(AtomicUsize::new(0));
-    let count_clone = call_count.clone();
 
     struct CountingTool {
         count: Arc<AtomicUsize>,
@@ -237,8 +237,8 @@ async fn tool_called_exactly_once() {
 
     #[async_trait::async_trait]
     impl thalamus_runtime::Tool for CountingTool {
-        fn name(&self) -> &str {
-            "counting"
+        fn capability(&self) -> &str {
+            "test.counting"
         }
 
         fn description(&self) -> &str {
@@ -247,10 +247,20 @@ async fn tool_called_exactly_once() {
 
         async fn invoke(
             &self,
-            _parameters: serde_json::Value,
-        ) -> Result<serde_json::Value, thalamus_runtime::RuntimeError> {
+            request: thalamus_protocol::payload::RuntimeToolRequestPayload,
+        ) -> Result<thalamus_protocol::payload::RuntimeToolResultPayload, thalamus_runtime::RuntimeError> {
             self.count.fetch_add(1, Ordering::SeqCst);
-            Ok(serde_json::json!({"count": self.count.load(Ordering::SeqCst)}))
+            let count = self.count.load(Ordering::SeqCst);
+            Ok(thalamus_protocol::payload::RuntimeToolResultPayload {
+                task_id: request.task_id.clone(),
+                capability: request.capability.clone(),
+                request_id: request.request_id.clone(),
+                status: "completed".to_string(),
+                output: Some(serde_json::json!({"count": count})),
+                result: Some(serde_json::json!({"count": count})),
+                error: serde_json::json!({}),
+                correlation_id: request.correlation_id.clone(),
+            })
         }
     }
 
@@ -259,7 +269,7 @@ async fn tool_called_exactly_once() {
     let mut runtime = thalamus_runtime::ThalamusRuntime::new(bus, Arc::new(MockLlmProvider));
 
     runtime
-        .register_tool("test.counting".to_string(), Box::new(CountingTool { count: count_clone }))
+        .register_tool("test.counting".to_string(), Arc::new(CountingTool { count: call_count.clone() }))
         .await;
 
     runtime.start().await.expect("runtime should start");

@@ -1,18 +1,16 @@
 use std::sync::Arc;
 
 use clap::Parser;
-use thalamus_bus::{BasicBus, Handler, MessageBus, SubscriptionId};
+use thalamus_bus::BasicBus;
 use thalamus_protocol::subject::{
-    RUNTIME_AGENT_SPAWN, RUNTIME_AGENT_READY, RUNTIME_AGENT_EXIT, RUNTIME_AGENT_ERROR,
     RUNTIME_LLM_REQUEST, RUNTIME_LLM_RESPONSE, RUNTIME_TASK_ASSIGN, RUNTIME_TASK_RESULT,
     RUNTIME_TOOL_REQUEST, RUNTIME_TOOL_RESULT,
 };
 use thalamus_protocol::{
     payload::{
-        RuntimeAgentReadyPayload, RuntimeLLMRequestPayload, RuntimeTaskAssignPayload,
+        RuntimeLLMRequestPayload, RuntimeTaskAssignPayload,
         RuntimeTaskResultPayload, RuntimeToolRequestPayload,
     },
-    EventEnvelope,
 };
 use thalamus_runtime::{llm::MockLlmProvider, ThalamusRuntime};
 
