@@ -1,19 +1,17 @@
 use std::sync::Arc;
 
-use thalamus_bus::BasicBus;
+use thalamus_bus::{BasicBus, MessageBus};
 use thalamus_protocol::{
     payload::{
         RuntimeAgentReadyPayload, RuntimeLLMRequestPayload, RuntimeTaskAssignPayload,
         RuntimeTaskResultPayload, RuntimeToolRequestPayload,
     },
     subject::{
-        RUNTIME_LLM_REQUEST, RUNTIME_TASK_ASSIGN, RUNTIME_TASK_RESULT,
-        RUNTIME_TOOL_REQUEST, RUNTIME_TOOL_RESULT,
+        RUNTIME_LLM_REQUEST, RUNTIME_TASK_ASSIGN, RUNTIME_TASK_RESULT, RUNTIME_TOOL_REQUEST,
+        RUNTIME_TOOL_RESULT,
     },
 };
-use thalamus_runtime::{
-    ErrorLlmProvider, MockLlmProvider, RuntimeError, ThalamusRuntime,
-};
+use thalamus_runtime::{ErrorLlmProvider, MockLlmProvider, RuntimeError, ThalamusRuntime};
 
 #[tokio::test]
 async fn start_does_not_duplicate_internal_handlers() {
@@ -29,7 +27,10 @@ async fn start_does_not_duplicate_internal_handlers() {
     );
 
     // Trying to start again should fail
-    let err = runtime.start().await.expect_err("running runtime cannot be started again");
+    let err = runtime
+        .start()
+        .await
+        .expect_err("running runtime cannot be started again");
     assert!(matches!(err, RuntimeError::LifecycleError(_)));
 }
 

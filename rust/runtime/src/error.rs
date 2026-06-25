@@ -1,7 +1,7 @@
 /// RuntimeError: ランタイム操作時のエラー型
 use thiserror::Error;
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Clone)]
 pub enum RuntimeError {
     #[error("bus error: {0}")]
     BusError(String),

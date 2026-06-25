@@ -1,10 +1,7 @@
 use std::sync::Arc;
 
 use thalamus_bus::BasicBus;
-use thalamus_protocol::{
-    payload::RuntimeToolRequestPayload,
-    subject::RUNTIME_TOOL_REQUEST,
-};
+use thalamus_protocol::{payload::RuntimeToolRequestPayload, subject::RUNTIME_TOOL_REQUEST};
 use thalamus_runtime::{ThalamusRuntime, Tool};
 
 #[tokio::test]
@@ -92,7 +89,7 @@ async fn tool_echo_alias_works() {
 #[tokio::test]
 async fn register_tool_adds_capability() {
     let bus = BasicBus::new();
-    let mut runtime = ThalamusRuntime::new(bus, Arc::new(thalamus_runtime::MockLlmProvider));
+    let runtime = ThalamusRuntime::new(bus, Arc::new(thalamus_runtime::MockLlmProvider));
 
     // Register a custom tool
     struct DoubleTool;
@@ -107,7 +104,13 @@ async fn register_tool_adds_capability() {
             "Doubles the input"
         }
 
-        async fn invoke(&self, request: thalamus_protocol::payload::RuntimeToolRequestPayload) -> Result<thalamus_protocol::payload::RuntimeToolResultPayload, thalamus_runtime::RuntimeError> {
+        async fn invoke(
+            &self,
+            request: thalamus_protocol::payload::RuntimeToolRequestPayload,
+        ) -> Result<
+            thalamus_protocol::payload::RuntimeToolResultPayload,
+            thalamus_runtime::RuntimeError,
+        > {
             let result_value = if let Some(n) = request.input["value"].as_i64() {
                 serde_json::json!({"result": n * 2})
             } else {
@@ -126,7 +129,9 @@ async fn register_tool_adds_capability() {
         }
     }
 
-    runtime.register_tool("math.double".to_string(), Arc::new(DoubleTool)).await;
+    runtime
+        .register_tool("math.double".to_string(), Arc::new(DoubleTool))
+        .await;
 
     let caps = runtime.list_tool_capabilities().await;
     assert!(caps.contains(&"echo".to_string()));
@@ -137,9 +142,14 @@ async fn register_tool_adds_capability() {
 #[tokio::test]
 async fn unregister_tool_removes_capability() {
     let bus = BasicBus::new();
-    let mut runtime = ThalamusRuntime::new(bus, Arc::new(thalamus_runtime::MockLlmProvider));
+    let runtime = ThalamusRuntime::new(bus, Arc::new(thalamus_runtime::MockLlmProvider));
 
-    runtime.register_tool("math.double".to_string(), Arc::new(thalamus_runtime::EchoTool)).await;
+    runtime
+        .register_tool(
+            "math.double".to_string(),
+            Arc::new(thalamus_runtime::EchoTool),
+        )
+        .await;
 
     let caps = runtime.list_tool_capabilities().await;
     assert!(caps.contains(&"math.double".to_string()));
@@ -170,7 +180,13 @@ async fn tool_called_exactly_once() {
             "Counts invocations"
         }
 
-        async fn invoke(&self, request: thalamus_protocol::payload::RuntimeToolRequestPayload) -> Result<thalamus_protocol::payload::RuntimeToolResultPayload, thalamus_runtime::RuntimeError> {
+        async fn invoke(
+            &self,
+            request: thalamus_protocol::payload::RuntimeToolRequestPayload,
+        ) -> Result<
+            thalamus_protocol::payload::RuntimeToolResultPayload,
+            thalamus_runtime::RuntimeError,
+        > {
             self.count.fetch_add(1, Ordering::SeqCst);
             let count = self.count.load(Ordering::SeqCst);
             Ok(thalamus_protocol::payload::RuntimeToolResultPayload {
@@ -190,7 +206,14 @@ async fn tool_called_exactly_once() {
     let observer = bus.clone();
     let mut runtime = ThalamusRuntime::new(bus, Arc::new(thalamus_runtime::MockLlmProvider));
 
-    runtime.register_tool("test.counting".to_string(), Arc::new(CountingTool { count: call_count.clone() })).await;
+    runtime
+        .register_tool(
+            "test.counting".to_string(),
+            Arc::new(CountingTool {
+                count: call_count.clone(),
+            }),
+        )
+        .await;
 
     runtime.start().await.expect("runtime should start");
 

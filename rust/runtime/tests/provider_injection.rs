@@ -14,7 +14,10 @@ async fn default_provider_is_mock() {
     let bus = BasicBus::new();
     let runtime = ThalamusRuntime::new(bus, Arc::new(MockLlmProvider));
 
-    assert_eq!(runtime.state().await, thalamus_runtime::RuntimeState::Initialized);
+    assert_eq!(
+        runtime.state().await,
+        thalamus_runtime::RuntimeState::Initialized
+    );
 }
 
 #[tokio::test]
@@ -26,9 +29,7 @@ async fn set_llm_provider_replaces_provider() {
     runtime.start().await.expect("runtime should start");
 
     // Replace with error provider
-    runtime
-        .set_llm_provider(Arc::new(ErrorLlmProvider))
-        .await;
+    runtime.set_llm_provider(Arc::new(ErrorLlmProvider)).await;
 
     runtime
         .publish(
@@ -138,7 +139,7 @@ impl LlmProvider for CountingProvider {
 #[tokio::test]
 async fn custom_provider_is_called() {
     let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let provider = CountingProvider::new(count.clone());
+    let provider: Arc<dyn LlmProvider> = Arc::new(CountingProvider::new(count.clone()));
 
     let bus = BasicBus::new();
     let observer = bus.clone();

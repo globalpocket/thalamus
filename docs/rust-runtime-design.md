@@ -72,8 +72,7 @@ These semantics support deterministic local testing without requiring NATS for t
 `start()` registers internal handlers for all canonical subjects. These handlers are registered **once** and cannot be duplicated. Internal handlers:
 
 1. Process the event (update state, call provider/tool)
-2. Publish the result envelope to the bus
-3. Forward the original envelope to user handlers
+2. Publish only the result envelope to the bus (do NOT re-publish or forward the original envelope)
 
 Internal subjects:
 

@@ -4,11 +4,17 @@ use thalamus_runtime::{WorkerRegistry, WorkerState};
 fn register_creates_ready_worker() {
     let mut registry = WorkerRegistry::default();
 
-    registry.register("agent-1".to_string(), vec!["llm".to_string(), "tool.echo".to_string()]);
+    registry.register(
+        "agent-1".to_string(),
+        vec!["llm".to_string(), "tool.echo".to_string()],
+    );
 
     let worker = registry.lookup("agent-1").expect("worker should exist");
     assert_eq!(worker.state, WorkerState::Ready);
-    assert_eq!(worker.capabilities, vec!["llm".to_string(), "tool.echo".to_string()]);
+    assert_eq!(
+        worker.capabilities,
+        vec!["llm".to_string(), "tool.echo".to_string()]
+    );
 }
 
 #[test]
@@ -79,13 +85,22 @@ fn find_by_capability_filters_by_state() {
 fn list_capabilities_returns_sorted() {
     let mut registry = WorkerRegistry::default();
 
-    registry.register("agent-1".to_string(), vec!["z-cap".to_string(), "a-cap".to_string()]);
+    registry.register(
+        "agent-1".to_string(),
+        vec!["z-cap".to_string(), "a-cap".to_string()],
+    );
     registry.register("agent-2".to_string(), vec!["m-cap".to_string()]);
 
     // WorkerRegistry doesn't expose list_capabilities, so test via find_by_capability
-    assert!(registry.find_by_capability("a-cap").contains(&"agent-1".to_string()));
-    assert!(registry.find_by_capability("m-cap").contains(&"agent-2".to_string()));
-    assert!(registry.find_by_capability("z-cap").contains(&"agent-1".to_string()));
+    assert!(registry
+        .find_by_capability("a-cap")
+        .contains(&"agent-1".to_string()));
+    assert!(registry
+        .find_by_capability("m-cap")
+        .contains(&"agent-2".to_string()));
+    assert!(registry
+        .find_by_capability("z-cap")
+        .contains(&"agent-1".to_string()));
     assert!(registry.find_by_capability("non-existent").is_empty());
 }
 
@@ -116,5 +131,8 @@ fn registry_clone_is_independent() {
 
     // Changes to registry should not affect registry2
     registry.mark_exited("agent-1".to_string(), None);
-    assert_eq!(registry2.lookup("agent-1").unwrap().state, WorkerState::Ready);
+    assert_eq!(
+        registry2.lookup("agent-1").unwrap().state,
+        WorkerState::Ready
+    );
 }

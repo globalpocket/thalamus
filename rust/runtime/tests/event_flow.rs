@@ -1,16 +1,14 @@
 use std::sync::Arc;
 
-use thalamus_bus::BasicBus;
+use thalamus_bus::{BasicBus, MessageBus};
 use thalamus_protocol::{
     payload::{
-        RuntimeAgentErrorPayload, RuntimeAgentReadyPayload,
-        RuntimeLLMRequestPayload, RuntimeTaskAssignPayload,
-        RuntimeToolRequestPayload,
+        RuntimeAgentErrorPayload, RuntimeAgentReadyPayload, RuntimeLLMRequestPayload,
+        RuntimeTaskAssignPayload, RuntimeToolRequestPayload,
     },
     subject::{
-        RUNTIME_AGENT_ERROR, RUNTIME_AGENT_READY,
-        RUNTIME_LLM_REQUEST, RUNTIME_LLM_RESPONSE, RUNTIME_TASK_ASSIGN,
-        RUNTIME_TOOL_REQUEST, RUNTIME_TOOL_RESULT,
+        RUNTIME_AGENT_ERROR, RUNTIME_AGENT_READY, RUNTIME_LLM_REQUEST, RUNTIME_LLM_RESPONSE,
+        RUNTIME_TASK_ASSIGN, RUNTIME_TOOL_REQUEST, RUNTIME_TOOL_RESULT,
     },
 };
 use thalamus_runtime::MockLlmProvider;
@@ -86,12 +84,16 @@ async fn request_id_added_before_recording() {
     assert_eq!(events.len(), 1);
 
     // request_id should be auto-completed
-    let request_id = events[0].payload["request_id"].as_str().expect("request_id should exist");
+    let request_id = events[0].payload["request_id"]
+        .as_str()
+        .expect("request_id should exist");
     assert!(!request_id.is_empty());
 }
 
 #[tokio::test]
 async fn task_agent_update_via_bus_handler() {
+    use thalamus_protocol::payload::RuntimeAgentReadyPayload;
+
     let bus = BasicBus::new();
     let mut runtime = thalamus_runtime::ThalamusRuntime::new(bus, Arc::new(MockLlmProvider));
 
@@ -100,6 +102,21 @@ async fn task_agent_update_via_bus_handler() {
     let task_id = "task-1".to_string();
     let agent_id = "agent-1".to_string();
 
+    // First, register the agent via agent.ready
+    runtime
+        .publish(
+            RUNTIME_AGENT_READY.to_string(),
+            "test".to_string(),
+            serde_json::to_value(RuntimeAgentReadyPayload {
+                agent_id: agent_id.clone(),
+                capabilities: vec!["llm".to_string()],
+            })
+            .unwrap(),
+        )
+        .await
+        .expect("agent.ready should publish");
+
+    // Then assign a task
     runtime
         .publish(
             RUNTIME_TASK_ASSIGN.to_string(),
@@ -124,7 +141,9 @@ async fn task_agent_update_via_bus_handler() {
 
     // Check worker registry
     let registry = runtime.worker_registry().await;
-    let worker = registry.lookup(&agent_id).expect("agent should be registered");
+    let worker = registry
+        .lookup(&agent_id)
+        .expect("agent should be registered");
     assert_eq!(worker.state, thalamus_runtime::WorkerState::Ready);
 }
 
@@ -177,7 +196,10 @@ async fn provider_called_exactly_once() {
         async fn complete(
             &self,
             _request: RuntimeLLMRequestPayload,
-        ) -> Result<thalamus_protocol::payload::RuntimeLLMResponsePayload, thalamus_runtime::RuntimeError> {
+        ) -> Result<
+            thalamus_protocol::payload::RuntimeLLMResponsePayload,
+            thalamus_runtime::RuntimeError,
+        > {
             self.count.fetch_add(1, Ordering::SeqCst);
             Ok(thalamus_protocol::payload::RuntimeLLMResponsePayload {
                 task_id: "task-1".to_string(),
@@ -195,7 +217,12 @@ async fn provider_called_exactly_once() {
 
     let bus = BasicBus::new();
     let observer = bus.clone();
-    let mut runtime = thalamus_runtime::ThalamusRuntime::new(bus, Arc::new(CountingProvider { count: call_count.clone() }));
+    let mut runtime = thalamus_runtime::ThalamusRuntime::new(
+        bus,
+        Arc::new(CountingProvider {
+            count: call_count.clone(),
+        }),
+    );
 
     runtime.start().await.expect("runtime should start");
 
@@ -248,7 +275,10 @@ async fn tool_called_exactly_once() {
         async fn invoke(
             &self,
             request: thalamus_protocol::payload::RuntimeToolRequestPayload,
-        ) -> Result<thalamus_protocol::payload::RuntimeToolResultPayload, thalamus_runtime::RuntimeError> {
+        ) -> Result<
+            thalamus_protocol::payload::RuntimeToolResultPayload,
+            thalamus_runtime::RuntimeError,
+        > {
             self.count.fetch_add(1, Ordering::SeqCst);
             let count = self.count.load(Ordering::SeqCst);
             Ok(thalamus_protocol::payload::RuntimeToolResultPayload {
@@ -269,7 +299,12 @@ async fn tool_called_exactly_once() {
     let mut runtime = thalamus_runtime::ThalamusRuntime::new(bus, Arc::new(MockLlmProvider));
 
     runtime
-        .register_tool("test.counting".to_string(), Arc::new(CountingTool { count: call_count.clone() }))
+        .register_tool(
+            "test.counting".to_string(),
+            Arc::new(CountingTool {
+                count: call_count.clone(),
+            }),
+        )
         .await;
 
     runtime.start().await.expect("runtime should start");
@@ -346,9 +381,7 @@ async fn custom_handler_does_not_disable_internal_handler() {
     runtime
         .register_handler(
             RUNTIME_AGENT_READY.to_string(),
-            Arc::new(|_subject, _event| {
-                Box::pin(async move {})
-            }),
+            Arc::new(|_subject, _event| Box::pin(async move {})),
         )
         .await
         .expect("register_handler should succeed");

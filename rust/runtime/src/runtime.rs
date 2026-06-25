@@ -67,10 +67,7 @@ impl<B: MessageBus + 'static> ThalamusRuntime<B> {
     /// 新しいThalamusRuntimeインスタンスを作成する
     pub fn new(bus: B, llm_provider: Arc<dyn LlmProvider>) -> Self {
         let mut registry = ToolRegistry::new();
-        registry.register(
-            "tool.echo".to_string(),
-            Arc::new(crate::tool::EchoTool),
-        );
+        registry.register("tool.echo".to_string(), Arc::new(crate::tool::EchoTool));
         // Register "echo" alias for backwards compatibility
         registry.register_alias("echo".to_string(), "tool.echo".to_string());
 
@@ -112,7 +109,10 @@ impl<B: MessageBus + 'static> ThalamusRuntime<B> {
                 user_handler(subj, envelope).await;
             })
         });
-        let id = self.bus.subscribe(subject, bus_handler).await
+        let id = self
+            .bus
+            .subscribe(subject, bus_handler)
+            .await
             .map_err(|e| RuntimeError::BusError(format!("subscribe: {}", e)))?;
         let mut subs = self.user_subscriptions.write().await;
         subs.push(id.clone());
@@ -121,7 +121,9 @@ impl<B: MessageBus + 'static> ThalamusRuntime<B> {
 
     /// ユーザーイベントハンドラーを削除する（busからもunsubscribe）
     pub async fn unregister_handler(&self, id: SubscriptionId) -> Result<(), RuntimeError> {
-        self.bus.unsubscribe(id.clone()).await
+        self.bus
+            .unsubscribe(id.clone())
+            .await
             .map_err(|e| RuntimeError::BusError(format!("unsubscribe: {}", e)))?;
         let mut subs = self.user_subscriptions.write().await;
         subs.retain(|s| s != &id);
@@ -264,13 +266,13 @@ impl<B: MessageBus + 'static> ThalamusRuntime<B> {
             self.internal_subscriptions.write().await.push(spawn_sub);
         }
 
-        // runtime.agent.ready — process and forward (do NOT re-publish)
+        // runtime.agent.ready — process only (do NOT re-publish)
         {
             let core = core.clone();
             let b = bus.clone();
             let ready_handler: Handler = Arc::new(move |envelope| {
                 let core = core.clone();
-                let b = b.clone();
+                let _b = b.clone();
                 Box::pin(async move {
                     if let Ok(payload) =
                         serde_json::from_value::<RuntimeAgentReadyPayload>(envelope.payload.clone())
@@ -280,7 +282,6 @@ impl<B: MessageBus + 'static> ThalamusRuntime<B> {
                             .await
                             .mark_ready(payload.agent_id, payload.capabilities);
                     }
-                    let _ = b.publish(envelope).await;
                 })
             });
             let ready_sub = bus
@@ -290,13 +291,13 @@ impl<B: MessageBus + 'static> ThalamusRuntime<B> {
             self.internal_subscriptions.write().await.push(ready_sub);
         }
 
-        // runtime.agent.exit — process and forward (do NOT re-publish)
+        // runtime.agent.exit — process only (do NOT re-publish)
         {
             let core = core.clone();
             let b = bus.clone();
             let exit_handler: Handler = Arc::new(move |envelope| {
                 let core = core.clone();
-                let b = b.clone();
+                let _b = b.clone();
                 Box::pin(async move {
                     if let Ok(payload) =
                         serde_json::from_value::<RuntimeAgentExitPayload>(envelope.payload.clone())
@@ -306,7 +307,6 @@ impl<B: MessageBus + 'static> ThalamusRuntime<B> {
                             .await
                             .mark_exited(payload.agent_id, payload.reason);
                     }
-                    let _ = b.publish(envelope).await;
                 })
             });
             let exit_sub = bus
@@ -316,13 +316,13 @@ impl<B: MessageBus + 'static> ThalamusRuntime<B> {
             self.internal_subscriptions.write().await.push(exit_sub);
         }
 
-        // runtime.agent.error — process and forward (do NOT re-publish)
+        // runtime.agent.error — process only (do NOT re-publish)
         {
             let core = core.clone();
             let b = bus.clone();
             let error_handler: Handler = Arc::new(move |envelope| {
                 let core = core.clone();
-                let b = b.clone();
+                let _b = b.clone();
                 Box::pin(async move {
                     if let Ok(payload) =
                         serde_json::from_value::<RuntimeAgentErrorPayload>(envelope.payload.clone())
@@ -336,7 +336,6 @@ impl<B: MessageBus + 'static> ThalamusRuntime<B> {
                             );
                         }
                     }
-                    let _ = b.publish(envelope).await;
                 })
             });
             let error_sub = bus
@@ -346,13 +345,13 @@ impl<B: MessageBus + 'static> ThalamusRuntime<B> {
             self.internal_subscriptions.write().await.push(error_sub);
         }
 
-        // runtime.task.assign — process and forward (do NOT re-publish)
+        // runtime.task.assign — process only (do NOT re-publish)
         {
             let core = core.clone();
             let b = bus.clone();
             let task_assign_handler: Handler = Arc::new(move |envelope| {
                 let core = core.clone();
-                let b = b.clone();
+                let _b = b.clone();
                 Box::pin(async move {
                     if let Ok(payload) =
                         serde_json::from_value::<RuntimeTaskAssignPayload>(envelope.payload.clone())
@@ -375,23 +374,25 @@ impl<B: MessageBus + 'static> ThalamusRuntime<B> {
                             task.set_task_status(TaskStatus::Assigned).await;
                         }
                     }
-                    let _ = b.publish(envelope).await;
                 })
             });
             let task_assign_sub = bus
                 .subscribe(RUNTIME_TASK_ASSIGN.to_string(), task_assign_handler)
                 .await
                 .map_err(|e| RuntimeError::BusError(format!("subscribe task.assign: {}", e)))?;
-            self.internal_subscriptions.write().await.push(task_assign_sub);
+            self.internal_subscriptions
+                .write()
+                .await
+                .push(task_assign_sub);
         }
 
-        // runtime.task.result — process and forward (do NOT re-publish)
+        // runtime.task.result — process only (do NOT re-publish)
         {
             let core = core.clone();
             let b = bus.clone();
             let task_result_handler: Handler = Arc::new(move |envelope| {
                 let core = core.clone();
-                let b = b.clone();
+                let _b = b.clone();
                 Box::pin(async move {
                     if let Ok(payload) =
                         serde_json::from_value::<RuntimeTaskResultPayload>(envelope.payload.clone())
@@ -418,14 +419,16 @@ impl<B: MessageBus + 'static> ThalamusRuntime<B> {
                         *task.correlation_id.write().await = payload.correlation_id;
                         task.set_task_status(status).await;
                     }
-                    let _ = b.publish(envelope).await;
                 })
             });
             let task_result_sub = bus
                 .subscribe(RUNTIME_TASK_RESULT.to_string(), task_result_handler)
                 .await
                 .map_err(|e| RuntimeError::BusError(format!("subscribe task.result: {}", e)))?;
-            self.internal_subscriptions.write().await.push(task_result_sub);
+            self.internal_subscriptions
+                .write()
+                .await
+                .push(task_result_sub);
         }
 
         // runtime.llm.request — process, call provider, publish response (do NOT re-publish request)
@@ -437,15 +440,15 @@ impl<B: MessageBus + 'static> ThalamusRuntime<B> {
                 let b = b.clone();
                 Box::pin(async move {
                     // Parse request
-                    let request =
-                        match serde_json::from_value::<RuntimeLLMRequestPayload>(envelope.payload.clone())
-                        {
-                            Ok(r) => r,
-                            Err(_) => {
-                                let _ = b.publish(envelope).await;
-                                return;
-                            }
-                        };
+                    let request = match serde_json::from_value::<RuntimeLLMRequestPayload>(
+                        envelope.payload.clone(),
+                    ) {
+                        Ok(r) => r,
+                        Err(_) => {
+                            let _ = b.publish(envelope).await;
+                            return;
+                        }
+                    };
 
                     // Keep a reference to the original envelope for correlation
                     let request_event = envelope.clone();
@@ -462,9 +465,7 @@ impl<B: MessageBus + 'static> ThalamusRuntime<B> {
                     task.set_task_status(TaskStatus::WaitingForLlm).await;
 
                     // Call provider — read fresh provider from core
-                    let provider = {
-                        core.llm_provider.read().await.clone()
-                    };
+                    let provider = { core.llm_provider.read().await.clone() };
                     let response_result = provider.complete(request.clone()).await;
 
                     match response_result {
@@ -498,7 +499,11 @@ impl<B: MessageBus + 'static> ThalamusRuntime<B> {
                                 correlation_id: request.correlation_id.clone(),
                             };
                             let error_event = match core
-                                .generate_llm_response_envelope(&request_event, &request, error_response)
+                                .generate_llm_response_envelope(
+                                    &request_event,
+                                    &request,
+                                    error_response,
+                                )
                                 .await
                             {
                                 Ok(e) => e,
@@ -516,7 +521,10 @@ impl<B: MessageBus + 'static> ThalamusRuntime<B> {
                 .subscribe(RUNTIME_LLM_REQUEST.to_string(), llm_request_handler)
                 .await
                 .map_err(|e| RuntimeError::BusError(format!("subscribe llm.request: {}", e)))?;
-            self.internal_subscriptions.write().await.push(llm_request_sub);
+            self.internal_subscriptions
+                .write()
+                .await
+                .push(llm_request_sub);
         }
 
         // runtime.tool.request — process, call tool, publish result (do NOT re-publish request)
@@ -527,15 +535,15 @@ impl<B: MessageBus + 'static> ThalamusRuntime<B> {
                 let core = core.clone();
                 let b = b.clone();
                 Box::pin(async move {
-                    let request =
-                        match serde_json::from_value::<RuntimeToolRequestPayload>(envelope.payload.clone())
-                        {
-                            Ok(r) => r,
-                            Err(_) => {
-                                let _ = b.publish(envelope).await;
-                                return;
-                            }
-                        };
+                    let request = match serde_json::from_value::<RuntimeToolRequestPayload>(
+                        envelope.payload.clone(),
+                    ) {
+                        Ok(r) => r,
+                        Err(_) => {
+                            let _ = b.publish(envelope).await;
+                            return;
+                        }
+                    };
 
                     // Keep a reference to the original envelope for correlation
                     let request_event = envelope.clone();
@@ -625,7 +633,10 @@ impl<B: MessageBus + 'static> ThalamusRuntime<B> {
                 .subscribe(RUNTIME_TOOL_REQUEST.to_string(), tool_request_handler)
                 .await
                 .map_err(|e| RuntimeError::BusError(format!("subscribe tool.request: {}", e)))?;
-            self.internal_subscriptions.write().await.push(tool_request_sub);
+            self.internal_subscriptions
+                .write()
+                .await
+                .push(tool_request_sub);
         }
 
         *state = RuntimeState::Running;
@@ -686,13 +697,10 @@ impl<B: MessageBus + 'static> ThalamusRuntime<B> {
         let event_id = Uuid::new_v4().to_string();
 
         // Validate and normalize payload
-        let normalized =
-            thalamus_protocol::validation::validate_and_normalize_payload(
-                &subject,
-                &event_id,
-                payload,
-            )
-            .map_err(|e| RuntimeError::InvalidPayload(format!("{}: {}", e.subject, e.reason)))?;
+        let normalized = thalamus_protocol::validation::validate_and_normalize_payload(
+            &subject, &event_id, payload,
+        )
+        .map_err(|e| RuntimeError::InvalidPayload(format!("{}: {}", e.subject, e.reason)))?;
 
         let envelope = Self::envelope_with_id(subject.clone(), source, event_id, normalized);
 
@@ -740,7 +748,9 @@ impl<B: MessageBus + 'static> RuntimeCore<B> {
             payload,
         );
         event.causation_id = Some(request_event.id.clone());
-        event.correlation_id = request_event.correlation_id.clone()
+        event.correlation_id = request_event
+            .correlation_id
+            .clone()
             .or_else(|| request_payload.correlation_id.clone())
             .or_else(|| Some(request_event.id.clone()));
         Ok(event)
@@ -761,7 +771,9 @@ impl<B: MessageBus + 'static> RuntimeCore<B> {
             payload,
         );
         event.causation_id = Some(request_event.id.clone());
-        event.correlation_id = request_event.correlation_id.clone()
+        event.correlation_id = request_event
+            .correlation_id
+            .clone()
             .or_else(|| request_payload.correlation_id.clone())
             .or_else(|| Some(request_event.id.clone()));
         Ok(event)
@@ -796,7 +808,9 @@ impl<B: MessageBus + 'static> RuntimeCore<B> {
             payload,
         );
         event.causation_id = Some(request_event.id.clone());
-        event.correlation_id = request_event.correlation_id.clone()
+        event.correlation_id = request_event
+            .correlation_id
+            .clone()
             .or_else(|| request_payload.correlation_id.clone())
             .or_else(|| Some(request_event.id.clone()));
         Ok(event)
