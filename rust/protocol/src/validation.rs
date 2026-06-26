@@ -56,8 +56,8 @@ pub fn validate_and_normalize_payload(
 
     let normalized = match subject {
         "runtime.agent.spawn" => {
-            let p: crate::payload::RuntimeAgentSpawnPayload =
-                serde_json::from_value(payload).map_err(|e| ValidationError {
+            let p: crate::payload::RuntimeAgentSpawnPayload = serde_json::from_value(payload)
+                .map_err(|e| ValidationError {
                     subject: subject.to_string(),
                     reason: format!("RuntimeAgentSpawnPayload: {}", e),
                 })?;

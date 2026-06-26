@@ -117,6 +117,7 @@ impl CountingProvider {
         }
     }
 
+    #[allow(dead_code)]
     fn with_error(count: Arc<std::sync::atomic::AtomicUsize>) -> Self {
         Self {
             count,
@@ -129,7 +130,7 @@ impl CountingProvider {
 impl LlmProvider for CountingProvider {
     async fn complete(
         &self,
-        request: RuntimeLLMRequestPayload,
+        _request: RuntimeLLMRequestPayload,
     ) -> Result<RuntimeLLMResponsePayload, RuntimeError> {
         self.count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         self.result.clone()

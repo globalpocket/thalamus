@@ -10,9 +10,9 @@ use thalamus_protocol::{
         RuntimeToolRequestPayload,
     },
     subject::{
-        RUNTIME_AGENT_ERROR, RUNTIME_AGENT_EXIT, RUNTIME_AGENT_READY, RUNTIME_AGENT_SPAWN,
-        RUNTIME_LLM_REQUEST, RUNTIME_LLM_RESPONSE, RUNTIME_TASK_ASSIGN, RUNTIME_TASK_RESULT,
-        RUNTIME_TOOL_REQUEST, RUNTIME_TOOL_RESULT,
+        RUNTIME_AGENT_ERROR, RUNTIME_AGENT_EXIT, RUNTIME_AGENT_READY, RUNTIME_LLM_REQUEST,
+        RUNTIME_LLM_RESPONSE, RUNTIME_TASK_ASSIGN, RUNTIME_TASK_RESULT, RUNTIME_TOOL_REQUEST,
+        RUNTIME_TOOL_RESULT,
     },
     EventEnvelope,
 };
@@ -472,7 +472,10 @@ async fn behavior_mock_llm_provider_and_echo_tool_mediate_runtime_requests() {
         llm_response.message["content"],
         serde_json::json!("Mock response: summarize runtime MVP")
     );
-    assert_eq!(tool_result.result, Some(serde_json::json!({ "text": "runtime MVP" })));
+    assert_eq!(
+        tool_result.result,
+        Some(serde_json::json!({ "text": "runtime MVP" }))
+    );
 }
 
 #[tokio::test]
@@ -500,10 +503,10 @@ async fn behavior_runtime_default_handlers_publish_llm_response_and_tool_result(
         })
     });
 
-    runtime
+    let _ = runtime
         .register_handler(RUNTIME_LLM_RESPONSE.to_string(), llm_response_handler)
         .await;
-    runtime
+    let _ = runtime
         .register_handler(RUNTIME_TOOL_RESULT.to_string(), tool_result_handler)
         .await;
 

@@ -18,6 +18,14 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: cd rust && cargo fmt --all -- --check
 
+  check:
+    name: Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cd rust && cargo check --workspace --all-features
+
   clippy:
     name: Clippy
     runs-on: ubuntu-latest

@@ -248,15 +248,13 @@ impl<B: MessageBus + 'static> ThalamusRuntime<B> {
         let core = self.core.clone();
         let bus = self.bus.clone();
 
-        // runtime.agent.spawn — observation only in MVP
+        // runtime.agent.spawn — observation only in MVP (do NOT re-publish)
         {
-            let core = core.clone();
-            let b = bus.clone();
-            let spawn_handler: Handler = Arc::new(move |envelope| {
-                let _core = core.clone();
-                let b = b.clone();
+            let _core = core.clone();
+            let _b = bus.clone();
+            let spawn_handler: Handler = Arc::new(move |_envelope| {
                 Box::pin(async move {
-                    let _ = b.publish(envelope).await;
+                    // Observation only — no processing, no re-publish
                 })
             });
             let spawn_sub = bus
@@ -445,7 +443,7 @@ impl<B: MessageBus + 'static> ThalamusRuntime<B> {
                     ) {
                         Ok(r) => r,
                         Err(_) => {
-                            let _ = b.publish(envelope).await;
+                            // Parse error — drop envelope, do not re-publish
                             return;
                         }
                     };
@@ -476,7 +474,7 @@ impl<B: MessageBus + 'static> ThalamusRuntime<B> {
                             {
                                 Ok(e) => e,
                                 Err(_) => {
-                                    let _ = b.publish(request_event).await;
+                                    // Envelope generation failed — drop, do not re-publish
                                     return;
                                 }
                             };
@@ -508,7 +506,7 @@ impl<B: MessageBus + 'static> ThalamusRuntime<B> {
                             {
                                 Ok(e) => e,
                                 Err(_) => {
-                                    let _ = b.publish(request_event).await;
+                                    // Envelope generation failed — drop, do not re-publish
                                     return;
                                 }
                             };
@@ -540,7 +538,7 @@ impl<B: MessageBus + 'static> ThalamusRuntime<B> {
                     ) {
                         Ok(r) => r,
                         Err(_) => {
-                            let _ = b.publish(envelope).await;
+                            // Parse error — drop envelope, do not re-publish
                             return;
                         }
                     };

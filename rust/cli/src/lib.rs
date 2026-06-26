@@ -2,15 +2,13 @@ use std::sync::Arc;
 
 use clap::Parser;
 use thalamus_bus::BasicBus;
+use thalamus_protocol::payload::{
+    RuntimeLLMRequestPayload, RuntimeTaskAssignPayload, RuntimeTaskResultPayload,
+    RuntimeToolRequestPayload,
+};
 use thalamus_protocol::subject::{
     RUNTIME_LLM_REQUEST, RUNTIME_LLM_RESPONSE, RUNTIME_TASK_ASSIGN, RUNTIME_TASK_RESULT,
     RUNTIME_TOOL_REQUEST, RUNTIME_TOOL_RESULT,
-};
-use thalamus_protocol::{
-    payload::{
-        RuntimeLLMRequestPayload, RuntimeTaskAssignPayload,
-        RuntimeTaskResultPayload, RuntimeToolRequestPayload,
-    },
 };
 use thalamus_runtime::{llm::MockLlmProvider, ThalamusRuntime};
 

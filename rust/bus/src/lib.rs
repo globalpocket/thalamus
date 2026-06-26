@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::fmt;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
 use thalamus_protocol::EventEnvelope;
 use tokio::sync::RwLock;
@@ -166,7 +167,22 @@ impl MessageBus for BasicBus {
         // when a handler publishes to the same bus
         for handler in handlers {
             let env = envelope.clone();
-            handler(env).await;
+            // Use spawn_blocking to run the handler in a separate thread
+            // so that catch_unwind can catch panics from async handlers
+            let result = tokio::task::spawn_blocking(move || {
+                catch_unwind(AssertUnwindSafe(|| {
+                    let rt = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .unwrap();
+                    rt.block_on(handler(env));
+                }))
+            })
+            .await
+            .map_err(|_| BusError::ProtocolError)?
+            .map_err(|_| BusError::ProtocolError)?;
+
+            let _ = result;
         }
 
         Ok(())
@@ -285,8 +301,7 @@ mod tests {
         let bus2 = bus1.clone();
 
         let handler: Handler = Arc::new(|_| Box::pin(async {}));
-        bus1
-            .subscribe("test.subject".to_string(), handler)
+        bus1.subscribe("test.subject".to_string(), handler)
             .await
             .unwrap();
 
