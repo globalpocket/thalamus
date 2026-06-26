@@ -152,8 +152,44 @@ Each request subject (`runtime.llm.request`, `runtime.tool.request`) is processe
 
 ### Lifecycle
 
-* `start()` — registers internal handlers, transitions to Running. Calling start() while already running returns `LifecycleError`.
-* `stop()` — unsubscribes internal handlers, closes bus, transitions to Stopped. Publishing after stop returns closed error.
+> **重要: Start/Stop は daemon lifecycle ではない**
+>
+> `start()` および `stop()` は、プロセスの起動・終了を管理する daemon lifecycle 操作ではありません。これらは runtime の内部状態遷移とハンドラー管理のみを実行し、プロセスの生存期間を制御するものではありません。
+
+#### start()
+
+`start()` は以下の操作のみを実行します：
+
+1. 内部ハンドラーを登録（各 canonical subject に対して一度だけ登録、重複不可）
+2. 状態を `Running` に遷移
+
+`start()` は既に実行中の場合に `LifecycleError` を返します。プロセスの起動、デーモン化、リスタートは行いません。
+
+#### stop()
+
+`stop()` は以下の操作のみを実行します：
+
+1. 内部ハンドラーを unsubscribe
+2. bus を close
+3. 状態を `Stopped` に遷移
+
+`stop()` はプロセスの終了、シグナルハンドラー、リソース解放（ファイルディスクリプター等）を行いません。publish は closed bus エラーを返します。
+
+#### CLICommand::Stop
+
+`CLICommand::Stop` は idempotent な操作です。状態を表示し、必要に応じて stop() を呼び出しますが、プロセス終了（exit/abort）は行いません。
+
+#### Lifecycle vs Daemon Lifecycle 比較
+
+| 操作 | Runtime Lifecycle | Daemon Lifecycle |
+|------|-------------------|------------------|
+| 目的 | runtime 内部状態の管理 | プロセス生存期間の管理 |
+| start() | ハンドラー登録 + 状態遷移 | プロセス起動、デーモン化 |
+| stop() | ハンドラー解除 + bus close + 状態遷移 | シグナル送信、プロセス終了 |
+| リスタート | 未実装 | 通常サポート |
+| シグハンドラー | なし | 通常実装 |
+| プロセス終了 | なし | 必須 |
+| idempotent | stop() は idempotent | 実装依存 |
 
 ## CLI Contract
 
