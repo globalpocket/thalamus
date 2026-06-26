@@ -250,8 +250,6 @@ impl<B: MessageBus + 'static> ThalamusRuntime<B> {
 
         // runtime.agent.spawn — observation only in MVP (do NOT re-publish)
         {
-            let _core = core.clone();
-            let _b = bus.clone();
             let spawn_handler: Handler = Arc::new(move |_envelope| {
                 Box::pin(async move {
                     // Observation only — no processing, no re-publish
@@ -578,7 +576,7 @@ impl<B: MessageBus + 'static> ThalamusRuntime<B> {
                                     {
                                         Ok(e) => e,
                                         Err(_) => {
-                                            let _ = b.publish(request_event).await;
+                                            // Envelope generation failed — drop, do not re-publish
                                             return;
                                         }
                                     };
@@ -596,7 +594,7 @@ impl<B: MessageBus + 'static> ThalamusRuntime<B> {
                                     {
                                         Ok(e) => e,
                                         Err(_) => {
-                                            let _ = b.publish(request_event).await;
+                                            // Envelope generation failed — drop, do not re-publish
                                             return;
                                         }
                                     };
@@ -618,7 +616,7 @@ impl<B: MessageBus + 'static> ThalamusRuntime<B> {
                             {
                                 Ok(e) => e,
                                 Err(_) => {
-                                    let _ = b.publish(request_event).await;
+                                    // Envelope generation failed — drop, do not re-publish
                                     return;
                                 }
                             };
@@ -794,6 +792,7 @@ impl<B: MessageBus + 'static> RuntimeCore<B> {
             result: None,
             error: serde_json::json!({
                 "kind": error_kind,
+                "capability": request_payload.capability.clone(),
                 "message": error_message,
             }),
             correlation_id: request_payload.correlation_id.clone(),

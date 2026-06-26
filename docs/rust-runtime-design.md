@@ -120,23 +120,23 @@ Provider errors result in `runtime.llm.response` with `status="error"`. The requ
 
 The `Tool` trait:
 
-* `name()` — tool name
+* `capability()` — tool capability name
 * `description()` — tool description
-* `invoke(parameters)` — execute the tool
+* `invoke(RuntimeToolRequestPayload)` — execute the tool
 
 Default tools:
 
 * `tool.echo` — canonical name
 * `echo` — alias for backwards compatibility
 
-Unknown tools result in `runtime.tool.result` with `status="error"`. The request `publish()` itself succeeds.
+Unknown tools result in `runtime.tool.result` with `status="error"` and `error.capability` set to the requested capability name. The request `publish()` itself succeeds.
 
 ### Generated Event Helpers
 
 `llm.response` and `tool.result` envelopes are generated via private helpers in `RuntimeCore`:
 
 * New `event_id` is generated
-* `correlation_id = request payload correlation_id`
+* `correlation_id` resolution order: `request_event.correlation_id` → `payload.correlation_id` → `request_event.id`
 * `causation_id = request event id`
 * Payload `request_id = request payload request_id`
 * Payload `correlation_id = request payload correlation_id`
