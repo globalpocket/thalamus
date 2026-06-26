@@ -2,6 +2,8 @@
 
 Event-driven cognitive coordination protocol and runtime substrate for AI-native execution environments.
 
+[![Rust CI](https://github.com/globalpocket/thalamus/actions/workflows/rust.yml/badge.svg)](https://github.com/globalpocket/thalamus/actions/workflows/rust.yml)
+
 ---
 
 ## Overview

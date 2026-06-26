@@ -165,7 +165,7 @@ Each request subject (`runtime.llm.request`, `runtime.tool.request`) is processe
 
 `start()` は既に実行中の場合に `LifecycleError` を返します。プロセスの起動、デーモン化、リスタートは行いません。
 
-#### stop()
+#### Runtime stop() の冪等性
 
 `stop()` は以下の操作のみを実行します：
 
@@ -175,21 +175,25 @@ Each request subject (`runtime.llm.request`, `runtime.tool.request`) is processe
 
 `stop()` はプロセスの終了、シグナルハンドラー、リソース解放（ファイルディスクリプター等）を行いません。publish は closed bus エラーを返します。
 
-#### CLICommand::Stop
+**冪等性保証**: `stop()` は複数回呼び出しても安全です。2回目以降の呼び出しは、ハンドラーが既に unsubscribe されている場合や bus が既に close されている場合は、何もしません。状態も既に `Stopped` であれば遷移しません。
 
-`CLICommand::Stop` は idempotent な操作です。状態を表示し、必要に応じて stop() を呼び出しますが、プロセス終了（exit/abort）は行いません。
+#### CLI Command::Stop の冪等性
 
-#### Lifecycle vs Daemon Lifecycle 比較
+`CLICommand::Stop` は冪等性確保のため `stop()` を呼び出しません。状態を表示し、プロセス終了（exit/abort）も行いません。
 
-| 操作 | Runtime Lifecycle | Daemon Lifecycle |
-|------|-------------------|------------------|
-| 目的 | runtime 内部状態の管理 | プロセス生存期間の管理 |
-| start() | ハンドラー登録 + 状態遷移 | プロセス起動、デーモン化 |
-| stop() | ハンドラー解除 + bus close + 状態遷移 | シグナル送信、プロセス終了 |
-| リスタート | 未実装 | 通常サポート |
-| シグハンドラー | なし | 通常実装 |
-| プロセス終了 | なし | 必須 |
-| idempotent | stop() は idempotent | 実装依存 |
+**冪等性保証**: `stop()` を呼び出さないため、Runtime の状態を変更しません。複数回実行しても同じ結果（現在の状態表示）を返します。Runtime の状態遷移やリソース操作は一切行わないため、外部からの並列実行や誤った複数呼び出しにも影響を受けません。
+
+#### Runtime stop() と CLI Stop の冪等性比較
+
+| 項目 | Runtime stop() | CLI Command::Stop |
+|------|----------------|-------------------|
+| 目的 | runtime 内部状態を Stopped に遷移 | 現在の状態を表示（操作しない） |
+| ハンドラー unsubscribe | 初回のみ実行 | 実行しない |
+| bus close | 初回のみ実行 | 実行しない |
+| 状態遷移 | Running → Stopped（初回のみ） | 実行しない |
+| プロセス終了 | 行わない | 行わない |
+| 冪等性保証 | 複数回呼び出しで安全（2回目以降は NOP） | stop() を呼ばないため状態変更なし |
+| 並列実行安全性 | 内部ロックで保護 | 状態変更がないため安全 |
 
 ## CLI Contract
 

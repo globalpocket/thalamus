@@ -1,4 +1,13 @@
-# 計画: Start/Stopがdaemon lifecycleではないことを文書化し、cargo fmt/check/clippy/testの成功を確認する
+# 実施済み: Start/Stopがdaemon lifecycleではないことの文書化
+
+---
+
+**status**: implemented
+**last_updated**: 2026-01-01
+
+---
+
+> **メモ**: この計画は実施済みです。`start()`と`stop()`メソッドがdaemon lifecycleではないことの文書化、および既存CIワークフローの成功確認が完了しています。
 
 ## 1. タスク概要
 
