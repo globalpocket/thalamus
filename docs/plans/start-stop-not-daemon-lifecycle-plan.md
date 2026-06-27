@@ -3,7 +3,7 @@
 ---
 
 **status**: implemented
-**last_updated**: 2026-01-01
+**last_updated**: 2026-01-24
 
 ---
 
@@ -59,7 +59,7 @@
 
 #### CLIコマンドの扱い
 - [`CLICommand::Start`](rust/cli/src/lib.rs:33): `BasicBus`を作成し`runtime.start()`を呼ぶのみ
-- [`CLICommand::Stop`](rust/cli/src/lib.rs:84): 単に`"Runtime stopped"`をprintし、実際のstop処理は行わない（idempotent）
+- [`CLICommand::Stop`](rust/cli/src/lib.rs:84): 単に`"Runtime stopped"`をprintし、実際のstop処理は行わない（non-idempotentなstop()を呼ばないため安全）
 - [`CLICommand::Status`](rust/cli/src/lib.rs:93): 新規`BasicBus`を作成し`"Runtime status: initialized"`をprintするのみ
 
 ### 2.6 結論: Start/Stopはdaemon lifecycleではない

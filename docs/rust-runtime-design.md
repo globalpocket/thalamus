@@ -165,17 +165,17 @@ Each request subject (`runtime.llm.request`, `runtime.tool.request`) is processe
 
 `start()` は既に実行中の場合に `LifecycleError` を返します。プロセスの起動、デーモン化、リスタートは行いません。
 
-#### Runtime stop() の冪等性
+#### Runtime stop() の非冪等性
 
 `stop()` は以下の操作のみを実行します：
 
 1. 内部ハンドラーを unsubscribe
 2. bus を close
-3. 状態を `Stopped` に遷移
+3. 状態を `Running` → `Stopped` に遷移
 
 `stop()` はプロセスの終了、シグナルハンドラー、リソース解放（ファイルディスクリプター等）を行いません。publish は closed bus エラーを返します。
 
-**冪等性保証**: `stop()` は複数回呼び出しても安全です。2回目以降の呼び出しは、ハンドラーが既に unsubscribe されている場合や bus が既に close されている場合は、何もしません。状態も既に `Stopped` であれば遷移しません。
+**非冪等性保証**: `stop()` は非冪等です。初回の呼び出しのみ上記操作を実行し、状態を `Stopped` に遷移します。2回目以降の呼び出しは、既に `Stopped` 状態であるため `LifecycleError` を返します。複数回の呼び出しは許容されません。
 
 #### CLI Command::Stop の冪等性
 
@@ -192,7 +192,7 @@ Each request subject (`runtime.llm.request`, `runtime.tool.request`) is processe
 | bus close | 初回のみ実行 | 実行しない |
 | 状態遷移 | Running → Stopped（初回のみ） | 実行しない |
 | プロセス終了 | 行わない | 行わない |
-| 冪等性保証 | 複数回呼び出しで安全（2回目以降は NOP） | stop() を呼ばないため状態変更なし |
+| 冪等性保証 | 非冪等（2回目以降は LifecycleError） | stop() を呼ばないため状態変更なし |
 | 並列実行安全性 | 内部ロックで保護 | 状態変更がないため安全 |
 
 ## CLI Contract
