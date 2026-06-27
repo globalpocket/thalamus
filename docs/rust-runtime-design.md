@@ -183,17 +183,18 @@ Each request subject (`runtime.llm.request`, `runtime.tool.request`) is processe
 
 **冪等性保証**: `stop()` を呼び出さないため、Runtime の状態を変更しません。複数回実行しても同じ結果（現在の状態表示）を返します。Runtime の状態遷移やリソース操作は一切行わないため、外部からの並列実行や誤った複数呼び出しにも影響を受けません。
 
-#### Runtime stop() と CLI Stop の冪等性比較
+#### Runtime stop() と CLI Stop の比較
 
-| 項目 | Runtime stop() | CLI Command::Stop |
-|------|----------------|-------------------|
-| 目的 | runtime 内部状態を Stopped に遷移 | 現在の状態を表示（操作しない） |
-| ハンドラー unsubscribe | 初回のみ実行 | 実行しない |
-| bus close | 初回のみ実行 | 実行しない |
-| 状態遷移 | Running → Stopped（初回のみ） | 実行しない |
-| プロセス終了 | 行わない | 行わない |
-| 冪等性保証 | 非冪等（2回目以降は LifecycleError） | stop() を呼ばないため状態変更なし |
-| 並列実行安全性 | 内部ロックで保護 | 状態変更がないため安全 |
+| 項目 | Runtime::stop() | CLICommand::Stop |
+|------|-----------------|------------------|
+| 目的 | runtime内部pipelineを停止 | 停止要求をackする |
+| 実行条件 | `Running`状態のみ成功 | 常に成功 |
+| ハンドラーunsubscribe | 成功時に実行 | 実行しない |
+| bus close | 成功時に実行 | 実行しない |
+| 状態遷移 | `Running -> Stopping -> Stopped` | 実行しない |
+| 2回目以降 | `LifecycleError` | `Ok(())` |
+| 冪等性 | 非冪等 | 冪等ack |
+| daemon停止 | 行わない | 行わない |
 
 ## CLI Contract
 
@@ -225,3 +226,35 @@ The Rust MVP does not claim the following:
 * ZooCodeCustom integration.
 * Python runtime changes.
 * Runtime restart support (restart is not implemented).
+
+#### MessageBus Implementations
+
+- **BasicBus**: local deterministic in-memory bus (default)
+- **NatsBus**: optional distributed transport backend behind `nats` feature
+
+#### NATS Backend (Optional)
+
+`thalamus-bus` crate は optional feature `nats` として NATS 連携バックエンドを提供する。
+
+- **Feature**: `nats`
+- **実装**: [`NatsBus`](rust/bus/src/nats.rs)
+- **依存**: `async-nats` (optional)
+
+```toml
+[features]
+nats = ["dep:async-nats"]
+
+[dependencies]
+async-nats = { version = "0.37", optional = true }
+```
+
+使用例:
+
+```toml
+[dependencies]
+thalamus-bus = { version = "0.1", features = ["nats"] }
+```
+
+[`NatsBus`](rust/bus/src/nats.rs) は [`MessageBus`](rust/bus/src/lib.rs:62) トレイトを実装し、MVP at-most-once transportとして動作する。JetStreamは使用しない。
+
+詳細は [NATS Backend Design](nats-backend-design.md) を参照。

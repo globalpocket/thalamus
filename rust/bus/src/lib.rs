@@ -20,6 +20,21 @@ pub enum BusError {
     SerializationError(#[from] serde_json::Error),
     #[error("protocol error")]
     ProtocolError,
+    #[cfg(feature = "nats")]
+    #[error("connection error: {0}")]
+    ConnectionError(String),
+    #[cfg(feature = "nats")]
+    #[error("publish error: {0}")]
+    PublishError(String),
+    #[cfg(feature = "nats")]
+    #[error("subscribe error: {0}")]
+    SubscribeError(String),
+    #[cfg(feature = "nats")]
+    #[error("unsubscribe error: {0}")]
+    UnsubscribeError(String),
+    #[cfg(feature = "nats")]
+    #[error("NATS error: {0}")]
+    NatsError(#[from] Box<dyn std::error::Error + Send + Sync>),
 }
 
 /// Handler: イベントハンドラーの型定義
@@ -217,6 +232,10 @@ impl MessageBus for BasicBus {
         subscribers.get(subject).map(|s| s.len()).unwrap_or(0)
     }
 }
+
+/// NATS backend (optional feature)
+#[cfg(feature = "nats")]
+pub mod nats;
 
 #[cfg(test)]
 mod tests {

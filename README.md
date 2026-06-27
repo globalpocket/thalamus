@@ -408,6 +408,7 @@ Implemented today:
 * Unknown extension subjects ARE published
 * `request_id` is auto-completed for `runtime.llm.request` and `runtime.tool.request`
 * [`BasicBus`](rust/bus/src/lib.rs:84) implements `Clone + Send + Sync + 'static` with `&self` methods
+* [`NatsBus`](rust/bus/src/nats.rs) is an optional distributed transport backend behind `nats` feature (MVP at-most-once, no JetStream)
 * [`RuntimeCore`](rust/runtime/src/runtime.rs:35) holds shared state for internal handlers
 * [`ThalamusRuntime::publish()`](rust/runtime/src/runtime.rs:431) is the sole event entrance
 * CLI [`RunDemo`](rust/cli/src/lib.rs:203) observes event flow via `observer.published_events()`

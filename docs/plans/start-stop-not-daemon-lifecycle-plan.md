@@ -3,11 +3,11 @@
 ---
 
 **status**: implemented
-**last_updated**: 2026-01-24
+**last_updated**: 2025-01-24
 
 ---
 
-> **メモ**: この計画は実施済みです。`start()`と`stop()`メソッドがdaemon lifecycleではないことの文書化、および既存CIワークフローの成功確認が完了しています。
+> **メモ**: この計画は実施済みです。`start()`と`stop()`メソッドがdaemon lifecycleではないことの文書化が完了しています。CI workflow定義は存在する。実行成功はActions runまたはローカル検証で確認する。
 
 ## 1. タスク概要
 
