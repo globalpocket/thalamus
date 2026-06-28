@@ -36,12 +36,11 @@ mod nats_contract_tests {
     }
 
     #[tokio::test]
-    #[ignore]
     async fn test_nats_round_trip_if_env_is_set() {
         let url = match std::env::var("THALAMUS_NATS_TEST_URL") {
             Ok(u) => u,
             Err(_) => {
-                // Skip test if NATS_URL is not set
+                // Skip test if THALAMUS_NATS_TEST_URL is not set
                 return;
             }
         };
@@ -49,7 +48,7 @@ mod nats_contract_tests {
         let bus = match NatsBus::connect_url(&url).await {
             Ok(b) => b,
             Err(_) => {
-                // Skip if cannot connect
+                // Skip if cannot connect — acceptable for integration test skip behavior
                 return;
             }
         };

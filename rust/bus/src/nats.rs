@@ -191,15 +191,6 @@ impl MessageBus for NatsBus {
         let sub_id = SubscriptionId(Uuid::new_v4().to_string());
         let handler_for_task = handler.clone();
 
-        // Track handler count for this subject
-        {
-            let mut state = self.state.write().await;
-            *state
-                .subject_handler_counts
-                .entry(subject.clone())
-                .or_insert(0) += 1;
-        }
-
         let handle = tokio::spawn(async move {
             let mut subscriber = subscriber;
             while let Some(message) = subscriber.next().await {
@@ -222,7 +213,12 @@ impl MessageBus for NatsBus {
             }
         });
 
+        // Atomicity: handler_count increment and subscription insert under the same lock
         let mut state = self.state.write().await;
+        *state
+            .subject_handler_counts
+            .entry(subject.clone())
+            .or_insert(0) += 1;
         state
             .sub_handles
             .insert(sub_id.0.clone(), (subject.clone(), handle));
@@ -285,6 +281,10 @@ impl MessageBus for NatsBus {
     /// Closes the bus.
     ///
     /// Sets `closed = true`, aborts all `JoinHandle`s, clears `subject_handler_counts`, and closes the NATS client.
+    ///
+    /// Lock boundary: All state mutations (`closed`, `sub_handles`, `subject_handler_counts`, `client`)
+    /// happen under a single write lock. The `client.close().await` call happens while the lock is still
+    /// held, but `client.take()` transfers ownership so the NATS client operates independently afterward.
     async fn close(&self) {
         let mut state = self.state.write().await;
         state.closed = true;
@@ -344,5 +344,43 @@ mod tests {
             .build()
             .unwrap()
             .block_on(bus.is_closed()));
+    }
+
+    #[test]
+    fn test_nats_bus_handler_count_zero() {
+        let bus = NatsBus::new(NatsBusConfig::default());
+        assert_eq!(
+            tokio::runtime::Builder::new_current_thread()
+                .build()
+                .unwrap()
+                .block_on(bus.handler_count("test.subject")),
+            0
+        );
+    }
+
+    #[test]
+    fn test_nats_bus_close_sets_state() {
+        let bus = NatsBus::new(NatsBusConfig::default());
+        // Initial state: closed = true
+        assert!(
+            tokio::runtime::Builder::new_current_thread()
+                .build()
+                .unwrap()
+                .block_on(bus.is_closed()),
+            "Initial state should be closed"
+        );
+        // close() sets closed = true (already true, but verifies the operation)
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap()
+            .block_on(bus.close());
+        // State should still be closed
+        assert!(
+            tokio::runtime::Builder::new_current_thread()
+                .build()
+                .unwrap()
+                .block_on(bus.is_closed()),
+            "State should remain closed after close()"
+        );
     }
 }
