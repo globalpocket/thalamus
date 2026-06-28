@@ -8,7 +8,7 @@
 
 #[cfg(feature = "nats")]
 mod nats_contract_tests {
-    use thalamus_bus::{NatsBus, NatsBusConfig};
+    use thalamus_bus::{MessageBus, NatsBus, NatsBusConfig};
 
     #[test]
     fn test_nats_bus_config_default() {
@@ -62,8 +62,9 @@ mod nats_contract_tests {
             let received = received_clone.clone();
             let env = envelope;
             Box::pin(async move {
-                received.lock().await.push(env);
-            })
+                let mut guard = received.lock().await;
+                guard.push(env);
+            }) as std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>
         });
 
         let _sub_id = match bus.subscribe(subject.clone(), handler).await {

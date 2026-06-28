@@ -1,9 +1,9 @@
 #[cfg(feature = "nats")]
-use async_nats::Subscriber;
-#[cfg(feature = "nats")]
 use async_trait::async_trait;
 #[cfg(feature = "nats")]
-use futures::StreamExt;
+use futures::{SinkExt, StreamExt};
+#[cfg(feature = "nats")]
+use serde_json;
 #[cfg(feature = "nats")]
 use std::collections::HashMap;
 #[cfg(feature = "nats")]
@@ -18,11 +18,24 @@ use uuid::Uuid;
 #[cfg(feature = "nats")]
 use crate::{BusError, Handler, MessageBus, SubscriptionId};
 
-/// Configuration for NatsBus
-#[derive(Clone, Debug, Default)]
+/// Configuration for NatsBus.
+///
+/// # Defaults
+///
+/// - `url`: `"nats://127.0.0.1:4222"`
+#[derive(Clone, Debug)]
 pub struct NatsBusConfig {
     /// NATS server URL (default: "nats://127.0.0.1:4222")
     pub url: String,
+}
+
+#[cfg(feature = "nats")]
+impl Default for NatsBusConfig {
+    fn default() -> Self {
+        Self {
+            url: "nats://127.0.0.1:4222".to_string(),
+        }
+    }
 }
 
 #[cfg(feature = "nats")]
@@ -33,15 +46,17 @@ impl NatsBusConfig {
     }
 }
 
-/// Internal state for NatsBus
+/// Internal state for NatsBus.
+///
+/// - `client`: Optional NATS client connection.
+/// - `sub_handles`: Maps subscription ID to `JoinHandle<()` for each subscriber task.
+/// - `subject_handler_counts`: Tracks the number of handlers per subject.
+/// - `closed`: Flag indicating whether the bus is closed.
 #[cfg(feature = "nats")]
 struct NatsBusState {
-    #[cfg(feature = "nats")]
     client: Option<async_nats::Client>,
-    #[cfg(feature = "nats")]
-    subscribers: HashMap<String, Subscriber>,
-    #[cfg(feature = "nats")]
-    sub_handles: HashMap<String, tokio::task::JoinHandle<()>>,
+    sub_handles: HashMap<String, (String, tokio::task::JoinHandle<()>)>,
+    subject_handler_counts: HashMap<String, usize>,
     closed: bool,
 }
 
@@ -49,6 +64,18 @@ struct NatsBusState {
 ///
 /// This is an MVP at-most-once transport backend. It does NOT use JetStream,
 /// durable consumers, ack/retry/replay, or persistence.
+///
+/// # Cloning
+///
+/// `Clone` shares the internal `Arc<RwLock<NatsBusState>>`, so all clones
+/// operate on the same connection and subscription state.
+///
+/// # Subscription lifecycle
+///
+/// - `subscribe()`: Creates a NATS subscription, spawns a Tokio task, and stores its `JoinHandle` in `sub_handles`.
+/// - `unsubscribe()`: Aborts the `JoinHandle` via `handle.abort()`.
+/// - `close()`: Aborts all tracked `JoinHandle`s and sets `closed = true`.
+/// - `handler_count()`: Returns the value from `subject_handler_counts` for the given subject.
 #[cfg(feature = "nats")]
 pub struct NatsBus {
     state: Arc<RwLock<NatsBusState>>,
@@ -73,8 +100,8 @@ impl NatsBus {
         Self {
             state: Arc::new(RwLock::new(NatsBusState {
                 client: None,
-                subscribers: HashMap::new(),
                 sub_handles: HashMap::new(),
+                subject_handler_counts: HashMap::new(),
                 closed: true,
             })),
             url: config.url,
@@ -131,40 +158,56 @@ impl Default for NatsBus {
 #[cfg(feature = "nats")]
 #[async_trait]
 impl MessageBus for NatsBus {
+    /// Subscribes to a subject.
+    ///
+    /// - Clones the NATS client and creates a subscription.
+    /// - Spawns a Tokio task to process messages.
+    /// - Stores the `JoinHandle` in `sub_handles` and increments `subject_handler_counts`.
     async fn subscribe(
         &self,
         subject: String,
         handler: Handler,
     ) -> Result<SubscriptionId, BusError> {
-        let state = self.state.read().await;
+        // Check if closed and get client
+        let client = {
+            let state = self.state.read().await;
 
-        if state.closed {
-            return Err(BusError::Closed);
-        }
+            if state.closed {
+                return Err(BusError::Closed);
+            }
 
-        let client = state
-            .client
-            .as_ref()
-            .ok_or_else(|| BusError::ConnectionError("not connected".to_string()))?;
+            state
+                .client
+                .as_ref()
+                .ok_or_else(|| BusError::ConnectionError("not connected".to_string()))?
+                .clone()
+        };
 
-        drop(state);
-
-        let mut subscriber = client
-            .subscribe(&subject)
+        let subscriber = client
+            .subscribe(subject.clone())
             .await
             .map_err(|e| BusError::SubscribeError(e.to_string()))?;
 
         let sub_id = SubscriptionId(Uuid::new_v4().to_string());
-        let handler = Arc::new(handler);
+        let handler_for_task = handler.clone();
+
+        // Track handler count for this subject
+        {
+            let mut state = self.state.write().await;
+            *state
+                .subject_handler_counts
+                .entry(subject.clone())
+                .or_insert(0) += 1;
+        }
 
         let handle = tokio::spawn(async move {
+            let mut subscriber = subscriber;
             while let Some(message) = subscriber.next().await {
-                let handler = handler.clone();
-                let _msg = message.clone();
+                let handler = handler_for_task.clone();
+                let payload = message.payload.clone();
 
                 // Deserialize payload to EventEnvelope
-                let envelope: Result<EventEnvelope, _> =
-                    serde_json::from_str(&_msg.payload.to_string());
+                let envelope: Result<EventEnvelope, _> = serde_json::from_slice(&payload);
 
                 let envelope = match envelope {
                     Ok(e) => e,
@@ -180,36 +223,39 @@ impl MessageBus for NatsBus {
         });
 
         let mut state = self.state.write().await;
-        state.subscribers.insert(sub_id.0.clone(), subscriber);
-        state.sub_handles.insert(sub_id.0.clone(), handle);
+        state
+            .sub_handles
+            .insert(sub_id.0.clone(), (subject.clone(), handle));
         drop(state);
 
         Ok(sub_id)
     }
 
+    /// Publishes an event envelope to the subject.
+    ///
+    /// Serializes the `EventEnvelope` to JSON and publishes it via the NATS client.
     async fn publish(&self, envelope: EventEnvelope) -> Result<(), BusError> {
-        let state = self.state.read().await;
-
-        if state.closed {
-            return Err(BusError::Closed);
-        }
-
-        let client = state
-            .client
-            .as_ref()
-            .ok_or_else(|| BusError::ConnectionError("not connected".to_string()))?;
-
-        let payload = serde_json::to_string(&envelope)
-            .map_err(|e| BusError::SerializationError(e))?;
-
+        let client = {
+            let state = self.state.read().await;
+            if state.closed {
+                return Err(BusError::Closed);
+            }
+            state
+                .client
+                .clone()
+                .ok_or_else(|| BusError::ConnectionError("not connected".to_string()))?
+        };
+        let payload = serde_json::to_string(&envelope).map_err(BusError::SerializationError)?;
         client
             .publish(envelope.subject.clone(), payload.into())
             .await
             .map_err(|e| BusError::PublishError(e.to_string()))?;
-
         Ok(())
     }
 
+    /// Unsubscribes by ID.
+    ///
+    /// Aborts the `JoinHandle` via `handle.abort()` and decrements `subject_handler_counts`.
     async fn unsubscribe(&self, id: SubscriptionId) -> Result<(), BusError> {
         let mut state = self.state.write().await;
 
@@ -217,50 +263,59 @@ impl MessageBus for NatsBus {
             return Err(BusError::Closed);
         }
 
-        if let Some(subscriber) = state.subscribers.remove(&id.0) {
-            subscriber.unsubscribe().await.map_err(|e| {
-                BusError::UnsubscribeError(e.to_string())
-            })?;
+        if let Some((subject, handle)) = state.sub_handles.remove(&id.0) {
+            handle.abort();
+
+            // Decrement handler count for the subject
+            if let Some(count) = state.subject_handler_counts.get_mut(&subject) {
+                if *count > 0 {
+                    *count -= 1;
+                }
+                if *count == 0 {
+                    state.subject_handler_counts.remove(&subject);
+                }
+            }
         } else {
             return Err(BusError::NotFound(id.0));
-        }
-
-        if let Some(handle) = state.sub_handles.remove(&id.0) {
-            handle.abort();
         }
 
         Ok(())
     }
 
+    /// Closes the bus.
+    ///
+    /// Sets `closed = true`, aborts all `JoinHandle`s, clears `subject_handler_counts`, and closes the NATS client.
     async fn close(&self) {
         let mut state = self.state.write().await;
         state.closed = true;
 
-        for (_id, subscriber) in state.subscribers.drain() {
-            let _ = subscriber.unsubscribe().await;
-        }
-
-        for (_id, handle) in state.sub_handles.drain() {
+        for (_id, (_, handle)) in state.sub_handles.drain() {
             handle.abort();
         }
 
-        if let Some(client) = state.client.take() {
+        state.subject_handler_counts.clear();
+
+        if let Some(mut client) = state.client.take() {
             let _ = client.close().await;
         }
     }
 
+    /// Returns true if the bus has been closed.
     async fn is_closed(&self) -> bool {
         let state = self.state.read().await;
         state.closed
     }
 
+    /// Returns the number of handlers registered for the given subject.
+    ///
+    /// Reads from `subject_handler_counts`.
     async fn handler_count(&self, subject: &str) -> usize {
         let state = self.state.read().await;
-        // Count subscribers that match the subject
-        // In NatsBus, we track by subscription ID, not by subject
-        // For testing purposes, return 0 as we don't track subject->subs mapping
-        let _ = subject;
-        0
+        state
+            .subject_handler_counts
+            .get(subject)
+            .copied()
+            .unwrap_or(0)
     }
 }
 

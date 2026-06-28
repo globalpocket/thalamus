@@ -242,10 +242,11 @@ The Rust MVP does not claim the following:
 
 ```toml
 [features]
-nats = ["dep:async-nats"]
+nats = ["dep:async-nats", "dep:futures"]
 
 [dependencies]
 async-nats = { version = "0.37", optional = true }
+futures = { version = "0.3", optional = true }
 ```
 
 使用例:

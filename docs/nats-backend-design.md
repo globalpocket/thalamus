@@ -43,15 +43,27 @@ thalamus-bus = { version = "0.1", features = ["nats"] }
 ```rust
 #[derive(Clone, Debug)]
 pub struct NatsBusConfig {
+    /// NATS server URL (default: "nats://127.0.0.1:4222")
     pub url: String,
+}
+
+/// Internal state for NatsBus
+struct NatsBusState {
+    client: Option<async_nats::Client>,
+    sub_handles: HashMap<String, tokio::task::JoinHandle<()>>,
+    subject_handler_counts: HashMap<String, usize>,
+    closed: bool,
 }
 
 #[derive(Clone)]
 pub struct NatsBus {
-    // async_nats client
-    // subscription task handles
-    // closed flag
+    state: Arc<RwLock<NatsBusState>>,
+    url: String,
 }
+```
+
+### Re-exports
+`NatsBus` and `NatsBusConfig` are re-exported from the crate root when the `nats` feature is enabled.
 ```
 
 ### NatsBusConfig
@@ -150,9 +162,29 @@ async fn handler_count(&self, subject: &str) -> usize;
 
 ## Subscription lifecycle
 
-- **subscribe**: subscribeでNATS subscription taskをspawn
-- **unsubscribe**: unsubscribeでtask abort
-- **close**: closeで全task abort
+### Ownership model
+
+- `NatsBus` は subscriber stream を受信 task が所有する
+- subscribe 時に NATS subscription を作成し、Tokio task を spawn する
+- task は `subscriber.next().await` でメッセージを受信し続ける
+
+### State structure
+
+- `NatsBusState` は subscription metadata と `JoinHandle<()` を保持する
+- `sub_handles: HashMap<String, (String, tokio::task::JoinHandle<()>)>` で subscription id から (subject, handle) を参照する
+- `subject_handler_counts: HashMap<String, usize>` で subject ごとの handler 数を local metadata として管理する
+
+### Unsubscribe and close
+
+- `unsubscribe()`: 該当 subscription の `JoinHandle` に対して `handle.abort()` を呼び出し、task を中止する
+- `close()`: 全 subscription の `JoinHandle` に対して `handle.abort()` を呼び出し、subscription map を drain する
+- unsubscribe/close は task abort で subscription lifecycle を終了する
+
+### handler_count
+
+- `handler_count()`: `subject_handler_counts` から local metadata で数える
+- NATS server 側の購読数ではなく、この `NatsBus` インスタンスが保持する local subscription map から数える
+- BasicBus と同じテスト用途の観測 API として扱う
 
 ## Runtime integration
 
