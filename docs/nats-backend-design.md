@@ -10,7 +10,6 @@ NATS backendは`MessageBus`の分散実装である。
 
 ## 非目標
 
-- JetStreamなし
 - durable consumerなし
 - ack/retry/replayなし
 - persistenceなし
@@ -102,6 +101,7 @@ async fn subscribe(
 ) -> Result<SubscriptionId, BusError>;
 ```
 
+- busがclosedなら`BusError::Closed`を返す
 - NATS subjectへsubscribeする
 - subscriptionごとに受信loopをTokio taskとしてspawnする
 - NATS message payloadを`EventEnvelope`へdeserializeする
@@ -140,7 +140,7 @@ async fn is_closed(&self) -> bool;
 ```
 
 - `close()` は closed flagをtrueにし、全subscription taskをabortし、subscription mapをclearする
-- client自体のclose APIがある場合は呼ぶ
+- `client.close().await` を呼び出してNATSクライアントもcloseする（ロック解放後）
 - `is_closed()` は現在のclosed状態を返す
 
 ### handler_count
@@ -171,13 +171,14 @@ async fn handler_count(&self, subject: &str) -> usize;
 ### State structure
 
 - `NatsBusState` は subscription metadata と `JoinHandle<()` を保持する
-- `sub_handles: HashMap<String, (String, tokio::task::JoinHandle<()>)>` で subscription id から (subject, handle) を参照する
+- `sub_handles: HashMap<String, tokio::task::JoinHandle<()>>` で subscription id から handle を参照する
 - `subject_handler_counts: HashMap<String, usize>` で subject ごとの handler 数を local metadata として管理する
 
 ### Unsubscribe and close
 
 - `unsubscribe()`: 該当 subscription の `JoinHandle` に対して `handle.abort()` を呼び出し、task を中止する
 - `close()`: 全 subscription の `JoinHandle` に対して `handle.abort()` を呼び出し、subscription map を drain する
+- `close()` は `client.close().await` を呼び出してNATSクライアントもcloseする（ロック解放後）
 - unsubscribe/close は task abort で subscription lifecycle を終了する
 
 ### handler_count
@@ -198,10 +199,10 @@ async fn handler_count(&self, subject: &str) -> usize;
 - CIにNATS serverを必須にしない
 - `THALAMUS_NATS_TEST_URL`が未設定ならskipして成功扱い
 - 設定されている場合のみconnectしてround-tripを実行
+- 複数メッセージの round-trip テストと subscribe/unsubscribe サイクルテストを追加
 
 ## Future work
 
-- JetStream backend
 - durable consumers
 - delivery ack
 - replay

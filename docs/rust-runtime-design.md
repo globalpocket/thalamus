@@ -256,6 +256,6 @@ futures = { version = "0.3", optional = true }
 thalamus-bus = { version = "0.1", features = ["nats"] }
 ```
 
-[`NatsBus`](rust/bus/src/nats.rs) は [`MessageBus`](rust/bus/src/lib.rs:62) トレイトを実装し、MVP at-most-once transportとして動作する。JetStreamは使用しない。
+[`NatsBus`](rust/bus/src/nats.rs) は [`MessageBus`](rust/bus/src/lib.rs:62) トレイトを実装し、MVP at-most-once transportとして動作する。
 
 詳細は [NATS Backend Design](nats-backend-design.md) を参照。

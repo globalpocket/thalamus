@@ -236,8 +236,8 @@ impl MessageBus for BasicBus {
 /// NATS backend (optional feature)
 ///
 /// When the `nats` feature is enabled, this module provides a NATS-based
-/// message bus implementation (`NatsBus`) that uses NATS JetStream-like
-/// subject-based publishing and subscribing.
+/// message bus implementation (`NatsBus`) that uses subject-based
+/// publishing and subscribing.
 #[cfg(feature = "nats")]
 pub mod nats;
 

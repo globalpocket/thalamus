@@ -62,7 +62,8 @@ struct NatsBusState {
 
 /// NATS-based message bus implementation.
 ///
-/// This is an MVP at-most-once transport backend. It does NOT use JetStream,
+/// This is an MVP at-most-once transport backend. It uses NATS subject-based
+/// publishing and subscribing only. It does NOT use JetStream,
 /// durable consumers, ack/retry/replay, or persistence.
 ///
 /// # Cloning
@@ -215,6 +216,13 @@ impl MessageBus for NatsBus {
 
         // Atomicity: handler_count increment and subscription insert under the same lock
         let mut state = self.state.write().await;
+
+        // Re-check closed flag after acquiring Write lock
+        if state.closed {
+            handle.abort();
+            return Err(BusError::Closed);
+        }
+
         *state
             .subject_handler_counts
             .entry(subject.clone())
@@ -253,28 +261,29 @@ impl MessageBus for NatsBus {
     ///
     /// Aborts the `JoinHandle` via `handle.abort()` and decrements `subject_handler_counts`.
     async fn unsubscribe(&self, id: SubscriptionId) -> Result<(), BusError> {
-        let mut state = self.state.write().await;
+        let handle = {
+            let mut state = self.state.write().await;
 
-        if state.closed {
-            return Err(BusError::Closed);
-        }
+            if state.closed {
+                return Err(BusError::Closed);
+            }
 
-        if let Some((subject, handle)) = state.sub_handles.remove(&id.0) {
-            handle.abort();
+            let (subject, handle) = state
+                .sub_handles
+                .remove(&id.0)
+                .ok_or_else(|| BusError::NotFound(id.0.clone()))?;
 
-            // Decrement handler count for the subject
             if let Some(count) = state.subject_handler_counts.get_mut(&subject) {
-                if *count > 0 {
-                    *count -= 1;
-                }
+                *count = count.saturating_sub(1);
                 if *count == 0 {
                     state.subject_handler_counts.remove(&subject);
                 }
             }
-        } else {
-            return Err(BusError::NotFound(id.0));
-        }
 
+            handle
+        };
+
+        handle.abort();
         Ok(())
     }
 
@@ -282,20 +291,31 @@ impl MessageBus for NatsBus {
     ///
     /// Sets `closed = true`, aborts all `JoinHandle`s, clears `subject_handler_counts`, and closes the NATS client.
     ///
-    /// Lock boundary: All state mutations (`closed`, `sub_handles`, `subject_handler_counts`, `client`)
-    /// happen under a single write lock. The `client.close().await` call happens while the lock is still
-    /// held, but `client.take()` transfers ownership so the NATS client operates independently afterward.
+    /// Lock boundary: State mutations (`closed`, `sub_handles`, `subject_handler_counts`, `client`)
+    /// happen under a single write lock. The `client.close().await` call happens after the lock
+    /// is released to avoid holding a Write lock during an async operation.
     async fn close(&self) {
-        let mut state = self.state.write().await;
-        state.closed = true;
+        let (handles, client) = {
+            let mut state = self.state.write().await;
+            state.closed = true;
 
-        for (_id, (_, handle)) in state.sub_handles.drain() {
+            let handles = state
+                .sub_handles
+                .drain()
+                .map(|(_, (_, handle))| handle)
+                .collect::<Vec<_>>();
+
+            state.subject_handler_counts.clear();
+            let client = state.client.take();
+
+            (handles, client)
+        };
+
+        for handle in handles {
             handle.abort();
         }
 
-        state.subject_handler_counts.clear();
-
-        if let Some(mut client) = state.client.take() {
+        if let Some(mut client) = client {
             let _ = client.close().await;
         }
     }
