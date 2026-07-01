@@ -22,7 +22,13 @@ use crate::{BusError, Handler, MessageBus, SubscriptionId};
 ///
 /// # Defaults
 ///
-/// - `url`: `"nats://127.0.0.1:4222"`
+/// - `url`: `"nats://127.0.0.1:4222"` or value from `THALAMUS_NATS_URL` environment variable
+///
+/// # Environment Variable
+///
+/// If `THALAMUS_NATS_URL` is set, it takes precedence over the default URL.
+/// When using `NatsBusConfig::from_env()`, the environment variable takes precedence
+/// over the explicit URL parameter.
 #[derive(Clone, Debug)]
 pub struct NatsBusConfig {
     /// NATS server URL (default: "nats://127.0.0.1:4222")
@@ -33,7 +39,8 @@ pub struct NatsBusConfig {
 impl Default for NatsBusConfig {
     fn default() -> Self {
         Self {
-            url: "nats://127.0.0.1:4222".to_string(),
+            url: std::env::var("THALAMUS_NATS_URL")
+                .unwrap_or_else(|_| "nats://127.0.0.1:4222".to_string()),
         }
     }
 }
@@ -43,6 +50,45 @@ impl NatsBusConfig {
     /// Creates a new NatsBusConfig with the given URL
     pub fn new(url: impl Into<String>) -> Self {
         Self { url: url.into() }
+    }
+
+    /// Creates a new NatsBusConfig from environment variables.
+    ///
+    /// Uses `THALAMUS_NATS_URL` if set, otherwise falls back to `"nats://127.0.0.1:4222"`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `THALAMUS_NATS_URL` is set but empty or contains only whitespace.
+    pub fn from_env() -> Self {
+        let url = std::env::var("THALAMUS_NATS_URL")
+            .unwrap_or_else(|_| "nats://127.0.0.1:4222".to_string())
+            .trim()
+            .to_string();
+
+        if url.is_empty() {
+            panic!(
+                "THALAMUS_NATS_URL is set but empty. \
+                 Please set it to a valid NATS URL (e.g., 'nats://127.0.0.1:4222')."
+            );
+        }
+
+        Self { url }
+    }
+
+    /// Validates that the URL is a valid NATS URL scheme.
+    ///
+    /// Accepts URLs starting with `nats://` or `tls://`.
+    /// Returns `None` if the URL scheme is invalid.
+    pub fn is_valid_url(url: &str) -> bool {
+        // Must have scheme followed by at least one character (host part)
+        // "nats://" alone is invalid because it lacks a host
+        if let Some(after_scheme) = url.strip_prefix("nats://") {
+            return !after_scheme.is_empty() && !after_scheme.trim().is_empty();
+        }
+        if let Some(after_scheme) = url.strip_prefix("tls://") {
+            return !after_scheme.is_empty() && !after_scheme.trim().is_empty();
+        }
+        false
     }
 }
 
