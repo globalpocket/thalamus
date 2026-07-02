@@ -379,9 +379,9 @@ mod nats_contract_tests {
         let original = std::env::var("THALAMUS_NATS_URL").ok();
         std::env::set_var("THALAMUS_NATS_URL", "   ");
 
-        let result = std::panic::catch_unwind(|| {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             NatsBusConfig::from_env();
-        });
+        }));
 
         assert!(
             result.is_err(),
